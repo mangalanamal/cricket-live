@@ -1,0 +1,550 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { getMatch, getInnings, setInnings, updateInnings, updateMatch, getTeam } from '@/lib/firestore';
+import { Match, Innings, Team, Player, BatsmanScore, BowlerScore } from '@/lib/types';
+
+export default function ProfessionalScoringPanel() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  
+  const [match, setMatch] = useState<Match | null>(null);
+  const [inning, setInning] = useState<Innings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [t1, setT1] = useState<Team | null>(null);
+  const [t2, setT2] = useState<Team | null>(null);
+
+  // Configuration
+  const [widePenalty, setWidePenalty] = useState(1);
+  const [noBallPenalty, setNoBallPenalty] = useState(1);
+
+  // Toss/Init State
+  const [tossWinner, setTossWinner] = useState('');
+  const [tossDecision, setTossDecision] = useState<'bat' | 'field'>('bat');
+  const [batTeamId, setBatTeamId] = useState('');
+  const [strikerId, setStrikerId] = useState('');
+  const [nonStrikerId, setNonStrikerId] = useState('');
+  const [bowlerId, setBowlerId] = useState('');
+
+  // Modal states
+  const [showWicketModal, setShowWicketModal] = useState(false);
+  const [showBowlerModal, setShowBowlerModal] = useState(false);
+  const [outBatsmanId, setOutBatsmanId] = useState('');
+  const [dismissalType, setDismissalType] = useState('caught');
+  const [newBatsmanId, setNewBatsmanId] = useState('');
+
+  const loadData = async () => {
+    setLoading(true);
+    const m = await getMatch(id);
+    if (!m) return;
+    setMatch(m);
+    
+    const [team1, team2] = await Promise.all([getTeam(m.team1Id), getTeam(m.team2Id)]);
+    setT1(team1); setT2(team2);
+
+    if (m.tossWinner) {
+      setTossWinner(m.tossWinner);
+      setTossDecision(m.tossDecision || 'bat');
+      const battingId = (m.tossDecision === 'bat') ? m.tossWinner : (m.tossWinner === m.team1Id ? m.team2Id : m.team1Id);
+      setBatTeamId(battingId || '');
+    }
+
+    const inn = await getInnings(id, m.currentInnings);
+    setInning(inn);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadData(); }, [id]);
+
+  const [tossSelection, setTossSelection] = useState<'' | '1' | '2'>('');
+
+  const handleToss = async () => {
+    if (!tossSelection || !tossDecision) return alert('Select toss details');
+    
+    const winningId = tossSelection === '1' ? match?.team1Id : match?.team2Id;
+    const battingId = tossDecision === 'bat' ? winningId : (tossSelection === '1' ? match?.team2Id : match?.team1Id);
+    
+    setTossWinner(winningId || 'TBD');
+    setBatTeamId(battingId || 'TBD');
+
+    await updateMatch(id, { 
+      tossWinner: winningId || 'TBD', 
+      tossDecision, 
+      status: 'toss' 
+    });
+    
+    setMatch(prev => prev ? { ...prev, tossWinner: winningId || 'TBD', tossDecision, status: 'toss' } : null);
+  };
+
+  const initInning = async () => {
+    if (!match || !batTeamId || !strikerId || !nonStrikerId || !bowlerId) return alert('Select players');
+    
+    const batTeam = batTeamId === match.team1Id ? t1 : t2;
+    const bowlTeam = batTeamId === match.team1Id ? t2 : t1;
+    if (!batTeam || !bowlTeam) return;
+
+    const strk = batTeam.players.find(p => p.id === strikerId);
+    const nstrk = batTeam.players.find(p => p.id === nonStrikerId);
+    const bowl = bowlTeam.players.find(p => p.id === bowlerId);
+    if (!strk || !nstrk || !bowl) return;
+
+    const newInning: Innings = {
+      inningsNo: match.currentInnings,
+      battingTeamId: batTeam.id, battingTeamName: batTeam.name,
+      bowlingTeamId: bowlTeam.id, bowlingTeamName: bowlTeam.name,
+      totalRuns: 0, wickets: 0, overs: 0, balls: 0,
+      extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0, total: 0 },
+      runRate: 0,
+      batsmen: [
+        { playerId: strk.id, playerName: strk.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0 },
+        { playerId: nstrk.id, playerName: nstrk.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0 }
+      ],
+      bowlers: [
+        { playerId: bowl.id, playerName: bowl.name, overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0, economy: 0, wides: 0, noBalls: 0 }
+      ],
+      fallOfWickets: [],
+      currentBatsmen: [strk.id, nstrk.id],
+      currentBowler: bowl.id,
+      isCompleted: false
+    };
+
+    await updateMatch(id, { status: 'live' });
+    await setInnings(id, match.currentInnings, newInning);
+    loadData();
+  };
+
+  const endInning = async () => {
+    if (!match || !inning) return;
+    const isFirstInn = match.currentInnings === 1;
+    
+    if (isFirstInn) {
+      await updateMatch(id, { currentInnings: 2, status: 'break' });
+      // Create empty 2nd innings
+      const bowlTeam = batTeamId === match.team1Id ? t1 : t2; // Prev bowl team is now bat team
+      const batTeam = batTeamId === match.team1Id ? t2 : t1; 
+      
+      alert("1st Innings Completed! Set up 2nd Innings.");
+      loadData();
+    } else {
+      // 2nd Innings end - Match Completed
+      let result = "Match Completed";
+      const inn1 = await getInnings(id, 1);
+      if (inn1) {
+        if (inn1.totalRuns > inning.totalRuns) {
+          result = `${inn1.battingTeamName} won by ${inn1.totalRuns - inning.totalRuns} runs`;
+        } else if (inning.totalRuns > inn1.totalRuns) {
+          result = `${inning.battingTeamName} won by ${10 - inning.wickets} wickets`;
+        } else {
+          result = "Match Tied";
+        }
+      }
+      await updateMatch(id, { status: 'completed', result });
+      alert("Match Completed! " + result);
+      router.push('/admin/matches');
+    }
+  };
+
+  const handleScore = async (runs: number, extraType: 'wd'|'nb'|'bye'|'lb'|null = null, isWicket = false) => {
+    if (!match || !inning) return;
+
+    let updatedInning = { ...inning };
+    let extras = { ...updatedInning.extras };
+    let swap = false;
+    let isLegal = (extraType !== 'wd' && extraType !== 'nb');
+
+    // 1. Calculate Runs and Extras
+    let penalty = 0;
+    if (extraType === 'wd') {
+      penalty = widePenalty;
+      extras.wides += (runs + penalty);
+      extras.total += (runs + penalty);
+    } else if (extraType === 'nb') {
+      penalty = noBallPenalty;
+      extras.noBalls += (runs + penalty);
+      extras.total += (runs + penalty);
+    } else if (extraType === 'lb') {
+      extras.legByes += runs;
+      extras.total += runs;
+    } else if (extraType === 'bye') {
+      extras.byes += runs;
+      extras.total += runs;
+    }
+
+    updatedInning.totalRuns += (runs + penalty);
+    updatedInning.extras = extras;
+
+    // 2. Overs/Balls logic
+    if (isLegal) {
+      updatedInning.balls++;
+      if (updatedInning.balls === 6) {
+        updatedInning.overs++;
+        updatedInning.balls = 0;
+        swap = true; // Over end swap
+      }
+    }
+
+    // 3. Batsman Update
+    const batsmen = [...updatedInning.batsmen];
+    const sIdx = batsmen.findIndex(b => b.playerId === updatedInning.currentBatsmen[0]);
+    if (sIdx !== -1 && extraType !== 'wd') {
+      const batsmanRuns = (extraType === 'lb' || extraType === 'bye') ? 0 : runs;
+      batsmen[sIdx].runs += batsmanRuns;
+      batsmen[sIdx].balls++;
+      if (batsmanRuns === 4) batsmen[sIdx].fours++;
+      if (batsmanRuns === 6) batsmen[sIdx].sixes++;
+      if (batsmanRuns % 2 !== 0) swap = !swap;
+    }
+
+    // 4. Bowler Update
+    const bowlers = [...updatedInning.bowlers];
+    const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
+    if (bwIdx !== -1) {
+      if (extraType !== 'lb' && extraType !== 'bye') {
+        bowlers[bwIdx].runs += (runs + penalty);
+      }
+      if (isLegal) {
+        bowlers[bwIdx].balls++;
+        if (bowlers[bwIdx].balls === 6) {
+          bowlers[bwIdx].overs++;
+          bowlers[bwIdx].balls = 0;
+        }
+      }
+      if (extraType === 'wd') bowlers[bwIdx].wides++;
+      if (extraType === 'nb') bowlers[bwIdx].noBalls++;
+    }
+
+    if (swap) {
+      updatedInning.currentBatsmen = [updatedInning.currentBatsmen[1], updatedInning.currentBatsmen[0]];
+    }
+
+    updatedInning.batsmen = batsmen;
+    updatedInning.bowlers = bowlers;
+    updatedInning.runRate = (updatedInning.totalRuns / (updatedInning.overs + updatedInning.balls / 6)) || 0;
+
+    await updateInnings(id, match.currentInnings, updatedInning);
+    setInning(updatedInning);
+
+    // Over end check
+    if (swap && updatedInning.balls === 0 && !updatedInning.isCompleted) {
+      setShowBowlerModal(true);
+    }
+
+    // Inning completion check
+    const isFirstInn = match.currentInnings === 1;
+    let autoComplete = false;
+
+    if (isFirstInn) {
+      if (updatedInning.overs === match.overs || updatedInning.wickets === 10) autoComplete = true;
+    } else {
+      // 2nd innings
+      const inn1 = await getInnings(id, 1);
+      if (inn1 && updatedInning.totalRuns > inn1.totalRuns) {
+        autoComplete = true; // Target reached
+      } else if (updatedInning.overs === match.overs || updatedInning.wickets === 10) {
+        autoComplete = true; // All balls/wickets used
+      }
+    }
+
+    if (autoComplete) {
+      if (confirm("Innings completed? Confirm to end.")) {
+        endInning();
+      }
+    }
+  };
+
+  const handleWicket = async () => {
+    if (!inning || !outBatsmanId || !newBatsmanId) return alert('Select details');
+    
+    let updatedInning = { ...inning };
+    updatedInning.wickets++;
+    
+    // Update batsman out
+    const batsmen = [...updatedInning.batsmen];
+    const oIdx = batsmen.findIndex(b => b.playerId === outBatsmanId);
+    if (oIdx !== -1) {
+      batsmen[oIdx].isOut = true;
+      batsmen[oIdx].dismissal = dismissalType;
+    }
+
+    // Add new batsman
+    const batTeam = updatedInning.battingTeamId === match?.team1Id ? t1 : t2;
+    const newB = batTeam?.players.find(p => p.id === newBatsmanId);
+    if (newB) {
+      batsmen.push({
+        playerId: newB.id, playerName: newB.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0
+      });
+      // Replace in current pair
+      const pair = [...updatedInning.currentBatsmen];
+      const pIdx = pair.indexOf(outBatsmanId);
+      if (pIdx !== -1) pair[pIdx] = newB.id;
+      updatedInning.currentBatsmen = pair as [string, string];
+    }
+
+    // Update bowler wickets
+    const bowlers = [...updatedInning.bowlers];
+    const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
+    if (bwIdx !== -1 && !['runout', 'retired'].includes(dismissalType)) {
+      bowlers[bwIdx].wickets++;
+    }
+
+    // Over count for wicket
+    updatedInning.balls++;
+    if (updatedInning.balls === 6) { updatedInning.overs++; updatedInning.balls = 0; }
+    if (bwIdx !== -1) {
+       bowlers[bwIdx].balls++;
+       if (bowlers[bwIdx].balls === 6) { bowlers[bwIdx].overs++; bowlers[bwIdx].balls = 0; }
+    }
+
+    updatedInning.batsmen = batsmen;
+    updatedInning.bowlers = bowlers;
+    await updateInnings(id, match!.currentInnings, updatedInning);
+    setShowWicketModal(false);
+    loadData();
+  };
+
+  if (loading) return <div className="spinner-overlay"><div className="spinner" /></div>;
+  if (!match) return <div>Match not found</div>;
+
+  // Render Logic
+  if (!match.tossWinner) {
+    return (
+      <div className="card card-padded" style={{ maxWidth: 400, margin: '0 auto' }}>
+        <h2 className="mb-20" style={{ textAlign: 'center' }}>💰 Match Toss</h2>
+        
+        <div className="form-group">
+          <label className="form-label">Toss Won By</label>
+          <select className="form-select" value={tossSelection} onChange={e => setTossSelection(e.target.value as any)}>
+            <option value="">- Select Team -</option>
+            <option value="1">{match.team1Name || 'Team 1'}</option>
+            <option value="2">{match.team2Name || 'Team 2'}</option>
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Decision</label>
+          <select className="form-select" value={tossDecision} onChange={e => setTossDecision(e.target.value as any)}>
+            <option value="bat">Batting First</option>
+            <option value="field">Fielding First</option>
+          </select>
+        </div>
+
+        <button className="btn btn-primary w-full mt-20" onClick={handleToss}>
+          Confirm Toss Result
+        </button>
+      </div>
+    );
+  }
+
+  if (!inning) {
+    const batTeam = batTeamId === match.team1Id ? t1 : t2;
+    const bowlTeam = batTeamId === match.team1Id ? t2 : t1;
+    return (
+      <div className="card card-padded">
+        <h2 className="mb-16">🏏 Start Innings {match.currentInnings}</h2>
+        <p className="mb-16" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {match.tossWinner === match.team1Id ? match.team1Name : match.team2Name} won the toss and elected to {match.tossDecision}.
+        </p>
+        <div className="form-row">
+            <div className="form-group">
+                <label className="form-label">Striker</label>
+                <select className="form-select" value={strikerId} onChange={e => setStrikerId(e.target.value)}>
+                    <option value="">- Select -</option>
+                    {batTeam?.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+            </div>
+            <div className="form-group">
+                <label className="form-label">Non-Striker</label>
+                <select className="form-select" value={nonStrikerId} onChange={e => setNonStrikerId(e.target.value)}>
+                    <option value="">- Select -</option>
+                    {batTeam?.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+            </div>
+        </div>
+        <div className="form-group">
+            <label className="form-label">Opening Bowler</label>
+            <select className="form-select" value={bowlerId} onChange={e => setBowlerId(e.target.value)}>
+                <option value="">- Select -</option>
+                {bowlTeam?.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+        </div>
+        <button className="btn btn-primary w-full mt-16" onClick={initInning}>Start Match</button>
+      </div>
+    );
+  }
+
+  const striker = inning.batsmen.find(b => b.playerId === inning.currentBatsmen[0]);
+  const nonStriker = inning.batsmen.find(b => b.playerId === inning.currentBatsmen[1]);
+  const currentBowler = inning.bowlers.find(b => b.playerId === inning.currentBowler);
+
+  return (
+    <div className="scoring-panel">
+      {/* Header Info */}
+      <div className="score-hero mb-20">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>{inning.battingTeamName}</div>
+            <div style={{ fontSize: 48, fontWeight: 900 }}>{inning.totalRuns}/{inning.wickets}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>Overs: {inning.overs}.{inning.balls}</div>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>CRR: {inning.runRate.toFixed(2)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        {/* Batsmen Tracking */}
+        <div className="card card-padded">
+          <h4 className="mb-12" style={{ textTransform: 'uppercase', fontSize: 12, opacity: 0.6 }}>Current Batsmen</h4>
+          <div className="batsman-row active">
+            <span>🏏 {striker?.playerName}*</span>
+            <strong>{striker?.runs} ({striker?.balls})</strong>
+          </div>
+          <div className="batsman-row">
+            <span>{nonStriker?.playerName}</span>
+            <strong>{nonStriker?.runs} ({nonStriker?.balls})</strong>
+          </div>
+        </div>
+
+        {/* Bowler Details */}
+        <div className="card card-padded">
+          <h4 className="mb-12" style={{ textTransform: 'uppercase', fontSize: 12, opacity: 0.6 }}>Current Bowler</h4>
+          <div className="batsman-row">
+            <span>🥎 {currentBowler?.playerName}</span>
+            <strong>{currentBowler?.wickets}-{currentBowler?.runs} ({currentBowler?.overs}.{currentBowler?.balls})</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="scoring-actions mt-20">
+        <div className="scoring-grid">
+          {[0, 1, 2, 3, 4, 6].map(r => (
+            <button key={r} className={`score-btn btn-${r}`} onClick={() => handleScore(r)}>{r}</button>
+          ))}
+          <button className="score-btn btn-wd" onClick={() => handleScore(0, 'wd')}>WD</button>
+          <button className="score-btn btn-nb" onClick={() => handleScore(0, 'nb')}>NB</button>
+          <button className="score-btn btn-bye" onClick={() => handleScore(1, 'bye')}>Bye</button>
+          <button className="score-btn btn-bye" onClick={() => handleScore(1, 'lb')}>LB</button>
+          <button className="score-btn btn-w" onClick={() => setShowWicketModal(true)}>OUT</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
+            <button className="btn btn-ghost w-full" onClick={() => {
+                const pair = [...inning.currentBatsmen];
+                setInning({ ...inning, currentBatsmen: [pair[1], pair[0]] });
+            }}>🔄 Switch Striker</button>
+            <button className="btn btn-ghost w-full" onClick={() => setShowBowlerModal(true)}>🥎 Change Bowler</button>
+        </div>
+
+        {/* Manual Adjustments */}
+        <div className="mt-24" style={{ display: 'flex', flexWrap: 'wrap', gap: 15, alignItems: 'center', background: 'var(--surface2)', padding: '16px 20px', borderRadius: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Quick Adjust:</span>
+                <div style={{ display: 'flex', gap: 5 }}>
+                    <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => handleScore(-1)}>Runs -1</button>
+                    <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => handleScore(1)}>Runs +1</button>
+                </div>
+                <div style={{ display: 'flex', gap: 5, marginLeft: 10 }}>
+                    <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px', color: '#e53e3e' }} onClick={async () => {
+                        if (inning.wickets > 0) await updateInnings(id, match!.currentInnings, { ...inning, wickets: inning.wickets - 1 });
+                        loadData();
+                    }}>Wkts -1</button>
+                </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderLeft: '1px solid #ddd', paddingLeft: 15 }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>Extras Config:</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <label style={{ fontSize: 11 }}>WD Penalty:</label>
+                    <input type="number" className="form-input" style={{ width: 50, padding: 4 }} value={widePenalty} onChange={e => setWidePenalty(parseInt(e.target.value))} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <label style={{ fontSize: 11 }}>NB Penalty:</label>
+                    <input type="number" className="form-input" style={{ width: 50, padding: 4 }} value={noBallPenalty} onChange={e => setNoBallPenalty(parseInt(e.target.value))} />
+                </div>
+            </div>
+        </div>
+      </div>
+
+      {/* Wicket Modal */}
+      {showWicketModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3 className="mb-16">Wicket Down</h3>
+            <div className="form-group">
+                <label className="form-label">Who is Out?</label>
+                <select className="form-select" value={outBatsmanId} onChange={e => setOutBatsmanId(e.target.value)}>
+                    <option value="">- Select -</option>
+                    <option value={striker?.playerId}>{striker?.playerName}</option>
+                    <option value={nonStriker?.playerId}>{nonStriker?.playerName}</option>
+                </select>
+            </div>
+            <div className="form-group">
+                <label className="form-label">Dismissal Type</label>
+                <select className="form-select" value={dismissalType} onChange={e => setDismissalType(e.target.value)}>
+                    <option value="caught">Caught</option>
+                    <option value="bowled">Bowled</option>
+                    <option value="lbw">LBW</option>
+                    <option value="runout">Run Out</option>
+                    <option value="stumped">Stumped</option>
+                    <option value="hitwicket">Hit Wicket</option>
+                </select>
+            </div>
+            <div className="form-group">
+                <label className="form-label">Next Batsman</label>
+                <select className="form-select" value={newBatsmanId} onChange={e => setNewBatsmanId(e.target.value)}>
+                    <option value="">- Select -</option>
+                    {(batTeamId === match.team1Id ? t1 : t2)?.players
+                      .filter(p => !inning.batsmen.some(b => b.playerId === p.id))
+                      .map(p => <option key={p.id} value={p.id}>{p.name}</option>)
+                    }
+                </select>
+            </div>
+            <div className="modal-actions">
+                <button className="btn btn-ghost" onClick={() => setShowWicketModal(false)}>Cancel</button>
+                <button className="btn btn-danger" onClick={handleWicket}>Confirm Wicket</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bowler Modal */}
+      {showBowlerModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3 className="mb-16">Select Next Bowler</h3>
+            <div className="form-group">
+                <label className="form-label">Bowler</label>
+                <select className="form-select" value={bowlerId} onChange={e => setBowlerId(e.target.value)}>
+                    <option value="">- Select -</option>
+                    {(batTeamId === match.team1Id ? t2 : t1)?.players.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                </select>
+            </div>
+            <div className="modal-actions">
+                <button className="btn btn-ghost" onClick={() => setShowBowlerModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={async () => {
+                    if (!bowlerId) return;
+                    const bowlTeam = batTeamId === match.team1Id ? t2 : t1;
+                    const p = bowlTeam?.players.find(x => x.id === bowlerId);
+                    if (!p) return;
+                    
+                    let updatedInning = { ...inning };
+                    if (!updatedInning.bowlers.find(b => b.playerId === p.id)) {
+                        updatedInning.bowlers.push({
+                            playerId: p.id, playerName: p.name, overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0, economy: 0, wides: 0, noBalls: 0
+                        });
+                    }
+                    updatedInning.currentBowler = p.id;
+                    await updateInnings(id, match.currentInnings, updatedInning);
+                    setInning(updatedInning);
+                    setShowBowlerModal(false);
+                }}>Confirm Bowler</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
