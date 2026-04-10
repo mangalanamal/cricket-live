@@ -30,7 +30,7 @@ export default function AdminLoginPage() {
         router.push('/admin/dashboard');
       }
     } catch (err: any) {
-      console.error(err);
+      console.error("Login Error:", err);
       setError(err.message || 'Authentication failed. Please check your credentials.');
       setLoading(false);
     }

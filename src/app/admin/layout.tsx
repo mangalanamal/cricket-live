@@ -12,8 +12,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const isLoginPage = pathname === '/admin/login';
 
   useEffect(() => {
-    if (!loading && !isLoginPage && (!profile || profile.role !== 'admin')) {
-      router.replace('/admin/login');
+    if (loading) return; // Wait for the observer to finish
+    
+    if (!isLoginPage) {
+      if (!profile) {
+        // Only redirect if we definitely are not getting a profile
+        router.replace('/admin/login');
+      } else if (profile.role !== 'admin') {
+        router.replace('/admin/login');
+      }
     }
   }, [profile, loading, router, isLoginPage]);
 

@@ -19,14 +19,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        const p = await getUserProfile(u.uid);
-        setProfile(p);
-      } else {
-        setProfile(null);
+      try {
+        setUser(u);
+        if (u) {
+          const p = await getUserProfile(u.uid);
+          setProfile(p);
+        } else {
+          setProfile(null);
+        }
+      } catch (err) {
+        console.error("Auth fetch error:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return unsub;
   }, []);

@@ -144,13 +144,31 @@ export default function ProfessionalScoringPanel() {
     }
   };
 
-  const handleScore = async (runs: number, extraType: 'wd'|'nb'|'bye'|'lb'|null = null, isWicket = false) => {
+  const handleScore = async (runs: number, extraType: 'wd'|'nb'|'bye'|'lb'|null = null, isWicket = false, isAdjustment = false) => {
     if (!match || !inning) return;
 
     let updatedInning = { ...inning };
     let extras = { ...updatedInning.extras };
     let swap = false;
-    let isLegal = (extraType !== 'wd' && extraType !== 'nb');
+    let isLegal = (extraType !== 'wd' && extraType !== 'nb' && !isAdjustment);
+
+    // If it's pure run adjustment, we just add to totals/batsman without affecting ball counts
+    if (isAdjustment) {
+      updatedInning.totalRuns += runs;
+      const batsmen = [...updatedInning.batsmen];
+      const sIdx = batsmen.findIndex(b => b.playerId === updatedInning.currentBatsmen[0]);
+      if (sIdx !== -1) batsmen[sIdx].runs += runs;
+      
+      const bowlers = [...updatedInning.bowlers];
+      const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
+      if (bwIdx !== -1) bowlers[bwIdx].runs += runs;
+
+      updatedInning.batsmen = batsmen;
+      updatedInning.bowlers = bowlers;
+      await updateInnings(id, match.currentInnings, updatedInning);
+      setInning(updatedInning);
+      return;
+    }
 
     // 1. Calculate Runs and Extras
     let penalty = 0;
@@ -379,6 +397,15 @@ export default function ProfessionalScoringPanel() {
   return (
     <div className="scoring-panel">
       {/* Header Info */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+          <div style={{ fontSize: 13, background: 'var(--surface2)', padding: '4px 12px', borderRadius: 20 }}>
+            💰 Toss: <strong>{tossWinner === match.team1Id ? match.team1Name : match.team2Name}</strong> elected to <strong>{tossDecision}</strong>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={() => window.open(`/match/${id}`, '_blank')}>
+            👁️ Preview User View
+          </button>
+      </div>
+
       <div className="score-hero mb-20">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
           <div>
@@ -437,30 +464,55 @@ export default function ProfessionalScoringPanel() {
         </div>
 
         {/* Manual Adjustments */}
-        <div className="mt-24" style={{ display: 'flex', flexWrap: 'wrap', gap: 15, alignItems: 'center', background: 'var(--surface2)', padding: '16px 20px', borderRadius: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 700 }}>Quick Adjust:</span>
-                <div style={{ display: 'flex', gap: 5 }}>
-                    <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => handleScore(-1)}>Runs -1</button>
-                    <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => handleScore(1)}>Runs +1</button>
-                </div>
-                <div style={{ display: 'flex', gap: 5, marginLeft: 10 }}>
-                    <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px', color: '#e53e3e' }} onClick={async () => {
+        <div className="mt-24" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 15, background: 'var(--surface2)', padding: '16px 20px', borderRadius: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Quick Adjust (Runs & Wickets):</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleScore(-1, null, false, true)}>Run -1</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleScore(1, null, false, true)}>Run +1</button>
+                    <button className="btn btn-ghost btn-sm" style={{ color: '#e53e3e' }} onClick={async () => {
                         if (inning.wickets > 0) await updateInnings(id, match!.currentInnings, { ...inning, wickets: inning.wickets - 1 });
                         loadData();
-                    }}>Wkts -1</button>
+                    }}>Wicket -1</button>
                 </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderLeft: '1px solid #ddd', paddingLeft: 15 }}>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>Extras Config:</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <label style={{ fontSize: 11 }}>WD Penalty:</label>
-                    <input type="number" className="form-input" style={{ width: 50, padding: 4 }} value={widePenalty} onChange={e => setWidePenalty(parseInt(e.target.value))} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: '1px solid var(--border)', paddingLeft: 15 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Bowler Adjustments:</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <button className="btn btn-ghost btn-sm" onClick={async () => {
+                       const bowlers = [...inning.bowlers];
+                       const bIdx = bowlers.findIndex(b => b.playerId === inning.currentBowler);
+                       if (bIdx !== -1) {
+                         if (bowlers[bIdx].balls > 0) bowlers[bIdx].balls--;
+                         else if (bowlers[bIdx].overs > 0) { bowlers[bIdx].overs--; bowlers[bIdx].balls = 5; }
+                         await updateInnings(id, match!.currentInnings, { ...inning, bowlers });
+                         loadData();
+                       }
+                    }}>Ball -1</button>
+                    <button className="btn btn-ghost btn-sm" onClick={async () => {
+                       const bowlers = [...inning.bowlers];
+                       const bIdx = bowlers.findIndex(b => b.playerId === inning.currentBowler);
+                       if (bIdx !== -1) {
+                         bowlers[bIdx].runs = Math.max(0, bowlers[bIdx].runs - 1);
+                         await updateInnings(id, match!.currentInnings, { ...inning, bowlers });
+                         loadData();
+                       }
+                    }}>Bowl Run -1</button>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <label style={{ fontSize: 11 }}>NB Penalty:</label>
-                    <input type="number" className="form-input" style={{ width: 50, padding: 4 }} value={noBallPenalty} onChange={e => setNoBallPenalty(parseInt(e.target.value))} />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: '1px solid var(--border)', paddingLeft: 15 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Extras & Rules:</span>
+                <div style={{ display: 'flex', gap: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <label style={{ fontSize: 11 }}>WD:</label>
+                      <input type="number" className="form-input" style={{ width: 45, padding: 4 }} value={widePenalty} onChange={e => setWidePenalty(parseInt(e.target.value))} />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <label style={{ fontSize: 11 }}>NB:</label>
+                      <input type="number" className="form-input" style={{ width: 45, padding: 4 }} value={noBallPenalty} onChange={e => setNoBallPenalty(parseInt(e.target.value))} />
+                  </div>
                 </div>
             </div>
         </div>

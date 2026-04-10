@@ -23,8 +23,9 @@ export default function ScorerLoginPage() {
         return;
       }
       router.push('/scorer');
-    } catch (err: unknown) {
-      setError('Invalid email or password.');
+    } catch (err: any) {
+      console.error("Login Error:", err);
+      setError(err.message || 'Invalid email or password.');
       setLoading(false);
     }
   };

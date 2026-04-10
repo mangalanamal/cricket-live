@@ -104,7 +104,7 @@ export default function MatchPage() {
 
         {match.tossWinner && (
           <div style={{ marginTop: 12, fontSize: 12, opacity: .75 }}>
-            🪙 Toss: {match.tossWinner} chose to {match.tossDecision}
+            🪙 Toss: {match.tossWinner === match.team1Id ? match.team1Name : match.team2Name} chose to {match.tossDecision}
           </div>
         )}
         {match.result && (
