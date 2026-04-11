@@ -81,24 +81,36 @@ export default function MatchPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Team 1 Section */}
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, opacity: .8 }}>{match.team1Name}</div>
-            {inn1 && match.currentInnings === 1 && (
-              <div style={{ fontSize: 32, fontWeight: 800 }}>{inn1.totalRuns}/{inn1.wickets}</div>
-            )}
-            {inn1 && match.currentInnings === 1 && (
-              <div style={{ fontSize: 12, opacity: .7 }}>({inn1.overs}.{inn1.balls} ov)</div>
-            )}
+            {(() => {
+              const team1Inn = inn1?.battingTeamId === match.team1Id ? inn1 : (inn2?.battingTeamId === match.team1Id ? inn2 : null);
+              if (!team1Inn) return null;
+              return (
+                <>
+                  <div style={{ fontSize: 32, fontWeight: 800 }}>{team1Inn.totalRuns}/{team1Inn.wickets}</div>
+                  <div style={{ fontSize: 12, opacity: .7 }}>({team1Inn.overs}.{team1Inn.balls} ov)</div>
+                </>
+              );
+            })()}
           </div>
+          
           <div style={{ opacity: .6, fontWeight: 700 }}>VS</div>
+          
+          {/* Team 2 Section */}
           <div style={{ flex: 1, textAlign: 'right' }}>
             <div style={{ fontSize: 14, opacity: .8 }}>{match.team2Name}</div>
-            {inn2 && (
-              <div style={{ fontSize: 32, fontWeight: 800 }}>{inn2.totalRuns}/{inn2.wickets}</div>
-            )}
-            {inn2 && (
-              <div style={{ fontSize: 12, opacity: .7 }}>({inn2.overs}.{inn2.balls} ov)</div>
-            )}
+            {(() => {
+              const team2Inn = inn1?.battingTeamId === match.team2Id ? inn1 : (inn2?.battingTeamId === match.team2Id ? inn2 : null);
+              if (!team2Inn) return null;
+              return (
+                <>
+                  <div style={{ fontSize: 32, fontWeight: 800 }}>{team2Inn.totalRuns}/{team2Inn.wickets}</div>
+                  <div style={{ fontSize: 12, opacity: .7 }}>({team2Inn.overs}.{team2Inn.balls} ov)</div>
+                </>
+              );
+            })()}
           </div>
         </div>
 
@@ -109,17 +121,46 @@ export default function MatchPage() {
         )}
         {match.result && (
           <div style={{
-            marginTop: 10, padding: '8px 14px', background: 'rgba(255,255,255,.15)',
-            borderRadius: 'var(--radius-md)', fontSize: 13, fontWeight: 600
+            marginTop: 10, padding: '12px 14px', background: 'rgba(255,255,255,.15)',
+            borderRadius: 'var(--radius-md)', fontSize: 15, fontWeight: 700, borderLeft: '4px solid #f6ad55'
           }}>
             🏆 {match.result}
           </div>
         )}
-        <div style={{ marginTop: 8, fontSize: 12, opacity: .65 }}>
-          📍 {match.venue} &nbsp;|&nbsp; {match.format} &nbsp;|&nbsp; {match.overs} Overs
-        </div>
-        <div style={{ marginTop: 2, fontSize: 12, opacity: .65 }}>
-          📅 {match.scheduledDate} at {match.scheduledTime}
+
+        {/* Live Summary Stats */}
+        {match.status === 'live' && (match.token || true) && (() => {
+           const currInn = match.currentInnings === 1 ? inn1 : inn2;
+           if (!currInn) return null;
+           const target = match.currentInnings === 2 && inn1 ? inn1.totalRuns + 1 : null;
+           const needed = target ? target - currInn.totalRuns : null;
+           const ballsRem = target ? (match.overs * 6) - (currInn.overs * 6 + currInn.balls) : null;
+           const rrr = (needed && ballsRem && ballsRem > 0) ? ((needed / ballsRem) * 6).toFixed(2) : '0.00';
+
+           return (
+             <div style={{ marginTop: 15, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+               <div style={{ display: 'flex', gap: 15, fontSize: 12, fontWeight: 600 }}>
+                 <div style={{ flex: 1, background: 'rgba(255,255,255,0.1)', padding: '8px 10px', borderRadius: 8 }}>
+                    CRR: {currInn.runRate?.toFixed(2) || '0.00'}
+                 </div>
+                 {target && (
+                    <div style={{ flex: 1, background: 'rgba(255,255,255,0.2)', padding: '8px 10px', borderRadius: 8, color: '#f6ad55' }}>
+                       RRR: {rrr}
+                    </div>
+                 )}
+                 {target && (
+                    <div style={{ flex: 1.5, background: 'rgba(0,0,0,0.2)', padding: '8px 10px', borderRadius: 8 }}>
+                       Need {needed} from {ballsRem} balls
+                    </div>
+                 )}
+               </div>
+             </div>
+           );
+        })()}
+
+        <div style={{ marginTop: 12, fontSize: 11, opacity: .65, display: 'flex', justifyContent: 'space-between' }}>
+          <span>📍 {match.venue} &nbsp;|&nbsp; {match.format} &nbsp;|&nbsp; {match.overs} Overs</span>
+          <span>📅 {match.scheduledDate}</span>
         </div>
       </div>
 
@@ -146,14 +187,14 @@ export default function MatchPage() {
       {/* Innings Tabs */}
       {(showInn1 || showInn2) && (
         <div className="tabs">
-          {showInn1 && (
+          {inn1 && (
             <button className={`tab${tab === 1 ? ' active' : ''}`} onClick={() => setTab(1)}>
-              1st Innings — {match.team1Name}
+              1st Innings — {inn1.battingTeamName}
             </button>
           )}
-          {showInn2 && (
+          {inn2 && (
             <button className={`tab${tab === 2 ? ' active' : ''}`} onClick={() => setTab(2)}>
-              2nd Innings — {match.team2Name}
+              2nd Innings — {inn2.battingTeamName}
             </button>
           )}
         </div>

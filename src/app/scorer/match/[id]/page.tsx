@@ -10,6 +10,7 @@ export default function ProfessionalScoringPanel() {
   
   const [match, setMatch] = useState<Match | null>(null);
   const [inning, setInning] = useState<Innings | null>(null);
+  const [firstInning, setFirstInning] = useState<Innings | null>(null);
   const [loading, setLoading] = useState(true);
   const [t1, setT1] = useState<Team | null>(null);
   const [t2, setT2] = useState<Team | null>(null);
@@ -45,12 +46,24 @@ export default function ProfessionalScoringPanel() {
     if (m.tossWinner) {
       setTossWinner(m.tossWinner);
       setTossDecision(m.tossDecision || 'bat');
-      const battingId = (m.tossDecision === 'bat') ? m.tossWinner : (m.tossWinner === m.team1Id ? m.team2Id : m.team1Id);
-      setBatTeamId(battingId || '');
+      const firstBattingId = (m.tossDecision === 'bat') ? m.tossWinner : (m.tossWinner === m.team1Id ? m.team2Id : m.team1Id);
+      
+      if (m.currentInnings === 1) {
+        setBatTeamId(firstBattingId || '');
+      } else {
+        const secondBattingId = (firstBattingId === m.team1Id) ? m.team2Id : m.team1Id;
+        setBatTeamId(secondBattingId || '');
+      }
     }
 
     const inn = await getInnings(id, m.currentInnings);
     setInning(inn);
+
+    if (m.currentInnings === 2) {
+      const inn1 = await getInnings(id, 1);
+      setFirstInning(inn1);
+    }
+
     setLoading(false);
   };
 
@@ -95,6 +108,7 @@ export default function ProfessionalScoringPanel() {
       totalRuns: 0, wickets: 0, overs: 0, balls: 0,
       extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0, total: 0 },
       runRate: 0,
+      ...(match.currentInnings === 2 && firstInning ? { targetRuns: firstInning.totalRuns + 1 } : {}),
       batsmen: [
         { playerId: strk.id, playerName: strk.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0 },
         { playerId: nstrk.id, playerName: nstrk.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0 }
@@ -113,10 +127,14 @@ export default function ProfessionalScoringPanel() {
     loadData();
   };
 
-  const endInning = async () => {
-    if (!match || !inning) return;
+  const endInning = async (innOverride?: Innings) => {
+    const currentInn = innOverride || inning;
+    if (!match || !currentInn) return;
     const isFirstInn = match.currentInnings === 1;
     
+    // Mark current inning as completed
+    await updateInnings(id, match.currentInnings, { isCompleted: true });
+
     if (isFirstInn) {
       await updateMatch(id, { currentInnings: 2, status: 'break' });
       // Create empty 2nd innings
@@ -128,12 +146,12 @@ export default function ProfessionalScoringPanel() {
     } else {
       // 2nd Innings end - Match Completed
       let result = "Match Completed";
-      const inn1 = await getInnings(id, 1);
+      const inn1 = firstInning || await getInnings(id, 1);
       if (inn1) {
-        if (inn1.totalRuns > inning.totalRuns) {
-          result = `${inn1.battingTeamName} won by ${inn1.totalRuns - inning.totalRuns} runs`;
-        } else if (inning.totalRuns > inn1.totalRuns) {
-          result = `${inning.battingTeamName} won by ${10 - inning.wickets} wickets`;
+        if (inn1.totalRuns > currentInn.totalRuns) {
+          result = `${inn1.battingTeamName} won by ${inn1.totalRuns - currentInn.totalRuns} runs`;
+        } else if (currentInn.totalRuns > inn1.totalRuns) {
+          result = `${currentInn.battingTeamName} won by ${10 - currentInn.wickets} wickets`;
         } else {
           result = "Match Tied";
         }
@@ -142,6 +160,19 @@ export default function ProfessionalScoringPanel() {
       alert("Match Completed! " + result);
       router.push('/admin/matches');
     }
+  };
+
+  const calculateRRR = () => {
+    if (!match || !inning || !firstInning) return '0.00';
+    const target = firstInning.totalRuns + 1;
+    const needed = target - inning.totalRuns;
+    if (needed <= 0) return '0.00';
+    const totalBalls = (match.overs || 0) * 6;
+    const bowledBalls = (inning.overs * 6) + inning.balls;
+    const remainingBalls = totalBalls - bowledBalls;
+    
+    if (remainingBalls <= 0) return '∞';
+    return ((needed / remainingBalls) * 6).toFixed(2);
   };
 
   const handleScore = async (runs: number, extraType: 'wd'|'nb'|'bye'|'lb'|null = null, isWicket = false, isAdjustment = false) => {
@@ -255,7 +286,7 @@ export default function ProfessionalScoringPanel() {
       if (updatedInning.overs === match.overs || updatedInning.wickets === 10) autoComplete = true;
     } else {
       // 2nd innings
-      const inn1 = await getInnings(id, 1);
+      const inn1 = firstInning || await getInnings(id, 1);
       if (inn1 && updatedInning.totalRuns > inn1.totalRuns) {
         autoComplete = true; // Target reached
       } else if (updatedInning.overs === match.overs || updatedInning.wickets === 10) {
@@ -265,7 +296,7 @@ export default function ProfessionalScoringPanel() {
 
     if (autoComplete) {
       if (confirm("Innings completed? Confirm to end.")) {
-        endInning();
+        await endInning(updatedInning);
       }
     }
   };
@@ -317,6 +348,14 @@ export default function ProfessionalScoringPanel() {
     updatedInning.bowlers = bowlers;
     await updateInnings(id, match!.currentInnings, updatedInning);
     setShowWicketModal(false);
+    
+    if (updatedInning.wickets === 10) {
+      if (confirm("10 Wickets down! Inning completed?")) {
+        await endInning(updatedInning);
+        return;
+      }
+    }
+    
     loadData();
   };
 
@@ -411,12 +450,40 @@ export default function ProfessionalScoringPanel() {
           <div>
             <div style={{ fontSize: 13, opacity: 0.8 }}>{inning.battingTeamName}</div>
             <div style={{ fontSize: 48, fontWeight: 900 }}>{inning.totalRuns}/{inning.wickets}</div>
+            {match.currentInnings === 2 && firstInning && (
+              <div style={{ fontSize: 14, marginTop: -5, fontWeight: 600, color: '#f6ad55' }}>
+                Target: {firstInning.totalRuns + 1} <span style={{ fontWeight: 400, opacity: 0.8, marginLeft: 8 }}>(First Inn: {firstInning.totalRuns})</span>
+              </div>
+            )}
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 18, fontWeight: 700 }}>Overs: {inning.overs}.{inning.balls}</div>
-            <div style={{ fontSize: 13, opacity: 0.8 }}>CRR: {inning.runRate.toFixed(2)}</div>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              CRR: {inning.runRate.toFixed(2)}
+              {match.currentInnings === 2 && firstInning && (
+                <span style={{ marginLeft: 10, paddingLeft: 10, borderLeft: '1px solid rgba(255,255,255,0.2)' }}>
+                  RRR: {calculateRRR()}
+                </span>
+              )}
+            </div>
           </div>
         </div>
+        
+        {/* Game Summary for Scorer */}
+        {match.currentInnings === 2 && firstInning && (() => {
+           const target = firstInning.totalRuns + 1;
+           const needed = target - inning.totalRuns;
+           const totalB = match.overs * 6;
+           const bowledB = (inning.overs * 6) + inning.balls;
+           const remB = totalB - bowledB;
+           return (
+             <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 10 }}>
+               <div style={{ fontSize: 13, fontWeight: 700, color: '#f6ad55', display: 'flex', justifyContent: 'center' }}>
+                 NEED {needed} RUNS FROM {remB} BALLS
+               </div>
+             </div>
+           );
+        })()}
       </div>
 
       <div className="grid-2">
@@ -514,6 +581,9 @@ export default function ProfessionalScoringPanel() {
                       <input type="number" className="form-input" style={{ width: 45, padding: 4 }} value={noBallPenalty} onChange={e => setNoBallPenalty(parseInt(e.target.value))} />
                   </div>
                 </div>
+                <button className="btn btn-danger btn-sm mt-8" onClick={() => {
+                  if (confirm("Are you sure you want to end this innings?")) endInning();
+                }}>🏁 End Innings Manual</button>
             </div>
         </div>
       </div>

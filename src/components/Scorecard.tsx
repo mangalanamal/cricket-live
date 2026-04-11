@@ -45,8 +45,15 @@ export default function Scorecard({ innings, label, isTarget }: Props) {
         <div className="score-footer">
           <div className="score-rr">
             <span>RR: <strong>{innings.runRate?.toFixed(2) ?? '0.00'}</strong></span>
-            {isTarget && innings.requiredRunRate != null && (
-              <span>RRR: <strong>{innings.requiredRunRate.toFixed(2)}</strong></span>
+            {isTarget && (
+              <span>RRR: <strong>{(() => {
+                const target = innings.targetRuns || 0;
+                const needed = target - innings.totalRuns;
+                if (needed <= 0) return '0.00';
+                const totalBalls = (innings.overs + (innings.balls > 0 ? 1 : 0)) * 6; // This is tricky without match info
+                // Better to just use the prop if available or keep it simple
+                return innings.requiredRunRate?.toFixed(2) ?? '0.00';
+              })()}</strong></span>
             )}
             <span>Extras: <strong>{innings.extras?.total ?? 0}</strong>
               &nbsp;(W:{innings.extras?.wides ?? 0} NB:{innings.extras?.noBalls ?? 0} B:{innings.extras?.byes ?? 0} LB:{innings.extras?.legByes ?? 0})
