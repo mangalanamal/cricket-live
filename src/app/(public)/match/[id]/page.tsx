@@ -129,7 +129,7 @@ export default function MatchPage() {
         )}
 
         {/* Live Summary Stats */}
-        {match.status === 'live' && (match.token || true) && (() => {
+        {match.status === 'live' && (() => {
            const currInn = match.currentInnings === 1 ? inn1 : inn2;
            if (!currInn) return null;
            const target = match.currentInnings === 2 && inn1 ? inn1.totalRuns + 1 : null;
@@ -207,7 +207,10 @@ export default function MatchPage() {
         <div className="empty-state">
           <div className="empty-state-icon">⏰</div>
           <div className="empty-state-text">Match hasn&apos;t started yet</div>
-          <div className="empty-state-sub">{match.scheduledDate} at {match.scheduledTime}</div>
+          <div className="empty-state-sub">
+            📅 {match.scheduledDate} at {match.scheduledTime} <br/>
+            📍 {match.venue || 'Venue TBD'}
+          </div>
         </div>
       )}
     </div>

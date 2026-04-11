@@ -35,7 +35,7 @@ export type MatchStatus = 'scheduled' | 'toss' | 'live' | 'break' | 'completed' 
 
 
 export interface Match {
-  token: boolean;
+  token?: boolean;
   id: string;
   tournamentId: string;
   tournamentName: string;

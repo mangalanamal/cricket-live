@@ -49,6 +49,9 @@ export default function MatchCard({ match }: Props) {
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                     {match.scheduledDate} {match.scheduledTime}
                   </div>
+                  <div style={{ fontSize: 11, color: 'var(--green-main)', fontWeight: 600, marginTop: 4 }}>
+                    📍 {match.venue}
+                  </div>
                 </div>
               )}
             </div>

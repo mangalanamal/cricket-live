@@ -11,6 +11,7 @@ const EMPTY: Omit<Match, 'id' | 'createdAt'> = {
   venue: '', scheduledDate: '', scheduledTime: '',
   format: 'T20', overs: 20, status: 'scheduled',
   currentInnings: 1, isDraftMatch: false,
+  token: false,
 };
 
 export default function AdminMatchesPage() {
