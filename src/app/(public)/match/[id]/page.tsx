@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import { subscribeToMatch, subscribeToInnings, getTournament } from '@/lib/firestore';
 import { Match, Innings, Tournament } from '@/lib/types';
 import Scorecard from '@/components/Scorecard';
+import Fireworks from '@/components/Fireworks';
 
 export default function MatchPage() {
   const { id } = useParams<{ id: string }>();
@@ -58,6 +59,7 @@ export default function MatchPage() {
 
   return (
     <div className="container" style={{ paddingTop: 20, paddingBottom: 40 }}>
+      {match.status === 'completed' && <Fireworks />}
       {/* Match header */}
       <div style={{
         background: 'linear-gradient(135deg,var(--green-dark) 0%,var(--green-main) 100%)',

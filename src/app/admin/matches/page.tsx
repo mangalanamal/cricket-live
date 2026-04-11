@@ -2,19 +2,21 @@
 import { useEffect, useState } from 'react';
 import { getTeams, getTournaments, addMatch, updateMatch, deleteMatch, getAllMatches, getUsers } from '@/lib/firestore';
 import { Match, Team, Tournament, UserProfile } from '@/lib/types';
+import { useNotification } from '@/context/NotificationContext';
 import Link from 'next/link';
 
 const EMPTY: Omit<Match, 'id' | 'createdAt'> = {
   tournamentId: '', tournamentName: '',
   team1Id: '', team1Name: '', team1ShortName: '', team1Logo: '', team1PlayingXI: [],
   team2Id: '', team2Name: '', team2ShortName: '', team2Logo: '', team2PlayingXI: [],
-  venue: '', scheduledDate: '', scheduledTime: '',
+  venue: 'N/A', scheduledDate: '', scheduledTime: '',
   format: 'T20', overs: 20, status: 'scheduled',
   currentInnings: 1, isDraftMatch: false,
   token: false,
 };
 
 export default function AdminMatchesPage() {
+  const { showAlert, showConfirm, showToast } = useNotification();
   const [matches, setMatches] = useState<Match[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -102,6 +104,7 @@ export default function AdminMatchesPage() {
         return result;
       };
       const data = clean(form);
+      if (!data.venue) data.venue = 'N/A';
       if (editId) await updateMatch(editId, data);
       else await addMatch(data);
       setShowModal(false); setMsg('');
@@ -114,8 +117,15 @@ export default function AdminMatchesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this match?')) return;
-    await deleteMatch(id); reload();
+    const ok = await showConfirm('Delete Match?', 'Are you sure you want to delete this match? This cannot be undone.');
+    if (!ok) return;
+    try {
+      await deleteMatch(id); 
+      showToast('Match deleted successfully');
+      reload();
+    } catch (e: any) {
+      showAlert('Error', e.message, 'error');
+    }
   };
 
   const statusColors: Record<string, string> = {
@@ -316,6 +326,11 @@ export default function AdminMatchesPage() {
                 )}
               </div>
             )}
+
+            <div className="form-group">
+                <label className="form-label">Play Ground Name (Venue)</label>
+                <input type="text" className="form-input" value={form.venue} onChange={e => setForm(f => ({ ...f, venue: e.target.value }))} placeholder="e.g. National Stadium" />
+            </div>
 
             <div className="form-row">
               <div className="form-group">

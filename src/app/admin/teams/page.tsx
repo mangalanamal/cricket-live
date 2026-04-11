@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { getTeams, addTeam, updateTeam, deleteTeam } from '@/lib/firestore';
 import { Team, Player } from '@/lib/types';
+import { useNotification } from '@/context/NotificationContext';
 
 const EMPTY_TEAM: Omit<Team, 'id' | 'createdAt'> = {
   name: '', shortName: '', logoUrl: '', players: [],
@@ -10,6 +11,7 @@ const EMPTY_TEAM: Omit<Team, 'id' | 'createdAt'> = {
 const DEFAULT_AVATAR = 'https://ui-avatars.com/api/?background=random&name=';
 
 export default function AdminTeamsPage() {
+  const { showAlert, showConfirm, showToast } = useNotification();
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -93,8 +95,15 @@ export default function AdminTeamsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this team?')) return;
-    await deleteTeam(id); reload();
+    const ok = await showConfirm('Delete Team?', 'Are you sure you want to delete this team? This action cannot be undone.');
+    if (!ok) return;
+    try {
+      await deleteTeam(id); 
+      showToast('Team deleted successfully');
+      reload();
+    } catch (e: any) {
+      showAlert('Error', e.message, 'error');
+    }
   };
 
   return (

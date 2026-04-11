@@ -40,8 +40,17 @@ export const updateTournament = (id: string, data: Partial<Tournament>) => {
   return updateDoc(doc(db, 'tournaments', id), data);
 };
 
-export const deleteTournament = (id: string) => {
+export const deleteTournament = async (id: string) => {
   if (!id) return Promise.reject('No Tournament ID');
+  
+  // 1. Get all matches for this tournament
+  const matchesSnap = await getDocs(query(collection(db, 'matches'), where('tournamentId', '==', id)));
+  
+  // 2. Delete matches (and potentially their subcollections)
+  const deletePromises = matchesSnap.docs.map(m => deleteDoc(doc(db, 'matches', m.id)));
+  await Promise.all(deletePromises);
+  
+  // 3. Delete the tournament itself
   return deleteDoc(doc(db, 'tournaments', id));
 };
 

@@ -67,6 +67,8 @@ export interface Match {
   scorerId?: string;
   result?: string;
   currentInnings: 1 | 2;
+  score1?: string; // e.g. "150/5 (20.0)"
+  score2?: string;
   createdAt: Date;
 }
 

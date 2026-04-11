@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { getTournaments, addTournament, updateTournament, deleteTournament, getTeams } from '@/lib/firestore';
 import { Tournament, Team } from '@/lib/types';
+import { useNotification } from '@/context/NotificationContext';
 
 const EMPTY: Omit<Tournament, 'id' | 'createdAt'> = {
   name: '', logoUrl: '', bannerUrl: '', format: 'T20',
@@ -12,6 +13,7 @@ const EMPTY: Omit<Tournament, 'id' | 'createdAt'> = {
 };
 
 export default function AdminTournamentsPage() {
+  const { showAlert, showConfirm, showToast } = useNotification();
   const [list, setList] = useState<Tournament[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,8 +102,18 @@ export default function AdminTournamentsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this tournament?')) return;
-    await deleteTournament(id); reload();
+    const ok = await showConfirm(
+      'Delete Tournament?', 
+      'This will permanently delete this tournament and ALL its associated match data. This action cannot be undone.'
+    );
+    if (!ok) return;
+    try {
+      await deleteTournament(id); 
+      showToast('Tournament and all related matches deleted permanently.');
+      reload();
+    } catch (e: any) {
+      showAlert('Error', e.message, 'error');
+    }
   };
 
   return (

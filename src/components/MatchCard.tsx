@@ -41,16 +41,17 @@ export default function MatchCard({ match }: Props) {
             </div>
 
             <div style={{ textAlign: 'center', flex: 1 }}>
-              {(isLive || isCompleted) && match.currentInnings ? (
-                <div className="match-vs">VS</div>
+              {(isLive || isCompleted) ? (
+                <div>
+                   <div className="match-vs" style={{ marginBottom: 4 }}>VS</div>
+                   {match.score1 && <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--green-dark)' }}>{match.score1}</div>}
+                   {match.score2 && <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-dark)' }}>{match.score2}</div>}
+                </div>
               ) : (
                 <div>
                   <div className="match-vs">VS</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                     {match.scheduledDate} {match.scheduledTime}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--green-main)', fontWeight: 600, marginTop: 4 }}>
-                    📍 {match.venue}
                   </div>
                 </div>
               )}
@@ -74,7 +75,7 @@ export default function MatchCard({ match }: Props) {
         </div>
 
         <div className="match-card-footer">
-          <span>📍 {match.venue}</span>
+          <span>📍 {match.venue || 'N/A'}</span>
           <span style={{ color: 'var(--green-main)', fontWeight: 600 }}>
             {match.format} • {match.overs} Overs →
           </span>

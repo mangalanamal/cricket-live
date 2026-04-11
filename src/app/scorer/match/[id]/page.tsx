@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getMatch, getInnings, setInnings, updateInnings, updateMatch, getTeam } from '@/lib/firestore';
 import { Match, Innings, Team, Player, BatsmanScore, BowlerScore } from '@/lib/types';
+import { useNotification } from '@/context/NotificationContext';
 
 export default function ProfessionalScoringPanel() {
+  const { showAlert, showConfirm, showToast } = useNotification();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   
@@ -72,7 +74,7 @@ export default function ProfessionalScoringPanel() {
   const [tossSelection, setTossSelection] = useState<'' | '1' | '2'>('');
 
   const handleToss = async () => {
-    if (!tossSelection || !tossDecision) return alert('Select toss details');
+    if (!tossSelection || !tossDecision) return showAlert('Action Required', 'Please select toss winner and decision.', 'warning');
     
     const winningId = tossSelection === '1' ? match?.team1Id : match?.team2Id;
     const battingId = tossDecision === 'bat' ? winningId : (tossSelection === '1' ? match?.team2Id : match?.team1Id);
@@ -90,7 +92,7 @@ export default function ProfessionalScoringPanel() {
   };
 
   const initInning = async () => {
-    if (!match || !batTeamId || !strikerId || !nonStrikerId || !bowlerId) return alert('Select players');
+    if (!match || !batTeamId || !strikerId || !nonStrikerId || !bowlerId) return showAlert('Missing Selection', 'Select both batsmen and an opening bowler to begin.', 'warning');
     
     const batTeam = batTeamId === match.team1Id ? t1 : t2;
     const bowlTeam = batTeamId === match.team1Id ? t2 : t1;
@@ -141,7 +143,7 @@ export default function ProfessionalScoringPanel() {
       const bowlTeam = batTeamId === match.team1Id ? t1 : t2; // Prev bowl team is now bat team
       const batTeam = batTeamId === match.team1Id ? t2 : t1; 
       
-      alert("1st Innings Completed! Set up 2nd Innings.");
+      await showAlert("Innings Over", "1st Innings Completed! Please set up the 2nd Innings details.", "success");
       loadData();
     } else {
       // 2nd Innings end - Match Completed
@@ -157,7 +159,7 @@ export default function ProfessionalScoringPanel() {
         }
       }
       await updateMatch(id, { status: 'completed', result });
-      alert("Match Completed! " + result);
+      await showAlert("Match Completed!", result, "success");
       router.push('/admin/matches');
     }
   };
@@ -270,7 +272,10 @@ export default function ProfessionalScoringPanel() {
     updatedInning.bowlers = bowlers;
     updatedInning.runRate = (updatedInning.totalRuns / (updatedInning.overs + updatedInning.balls / 6)) || 0;
 
+    const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
     await updateInnings(id, match.currentInnings, updatedInning);
+    await updateMatch(id, { [match.currentInnings === 1 ? 'score1' : 'score2']: scoreStr });
+    
     setInning(updatedInning);
 
     // Over end check
@@ -295,14 +300,15 @@ export default function ProfessionalScoringPanel() {
     }
 
     if (autoComplete) {
-      if (confirm("Innings completed? Confirm to end.")) {
+      const ok = await showConfirm("Innings Completed", "The current innings has reached its target/limit. End innings now?");
+      if (ok) {
         await endInning(updatedInning);
       }
     }
   };
 
   const handleWicket = async () => {
-    if (!inning || !outBatsmanId || !newBatsmanId) return alert('Select details');
+    if (!inning || !outBatsmanId || !newBatsmanId) return showAlert('Incomplete Details', 'Please select the out batsman and the next player to come in.', 'warning');
     
     let updatedInning = { ...inning };
     updatedInning.wickets++;
@@ -346,11 +352,16 @@ export default function ProfessionalScoringPanel() {
 
     updatedInning.batsmen = batsmen;
     updatedInning.bowlers = bowlers;
+    
+    const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
     await updateInnings(id, match!.currentInnings, updatedInning);
+    await updateMatch(id, { [match!.currentInnings === 1 ? 'score1' : 'score2']: scoreStr });
+    
     setShowWicketModal(false);
     
     if (updatedInning.wickets === 10) {
-      if (confirm("10 Wickets down! Inning completed?")) {
+      const ok = await showConfirm("All Out!", "10 Wickets are down. End the current innings?");
+      if (ok) {
         await endInning(updatedInning);
         return;
       }
@@ -581,8 +592,9 @@ export default function ProfessionalScoringPanel() {
                       <input type="number" className="form-input" style={{ width: 45, padding: 4 }} value={noBallPenalty} onChange={e => setNoBallPenalty(parseInt(e.target.value))} />
                   </div>
                 </div>
-                <button className="btn btn-danger btn-sm mt-8" onClick={() => {
-                  if (confirm("Are you sure you want to end this innings?")) endInning();
+                <button className="btn btn-danger btn-sm mt-8" onClick={async () => {
+                  const ok = await showConfirm("End Innings?", "Are you sure you want to end this innings manually?");
+                  if (ok) endInning();
                 }}>🏁 End Innings Manual</button>
             </div>
         </div>
