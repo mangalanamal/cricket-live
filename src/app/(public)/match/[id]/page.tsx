@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { subscribeToMatch, subscribeToInnings, getTournament } from '@/lib/firestore';
+import { subscribeToMatch, subscribeToInnings, getTournament, subscribeToAllInnings } from '@/lib/firestore';
 import { Match, Innings, Tournament } from '@/lib/types';
 import Scorecard from '@/components/Scorecard';
 import Fireworks from '@/components/Fireworks';
@@ -10,9 +10,8 @@ export default function MatchPage() {
   const { id } = useParams<{ id: string }>();
   const [match, setMatch]     = useState<Match | null>(null);
   const [tournament, setTournament] = useState<Tournament | null>(null);
-  const [inn1, setInn1]       = useState<Innings | null>(null);
-  const [inn2, setInn2]       = useState<Innings | null>(null);
-  const [tab, setTab]         = useState<1 | 2>(1);
+  const [innings, setInnings] = useState<Innings[]>([]);
+  const [tab, setTab]         = useState<number>(1);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,9 +24,13 @@ export default function MatchPage() {
       }
       setLoading(false);
     });
-    const unsubInn1 = subscribeToInnings(id, 1, setInn1);
-    const unsubInn2 = subscribeToInnings(id, 2, setInn2);
-    return () => { unsubMatch(); unsubInn1(); unsubInn2(); };
+    const unsubInns = subscribeToAllInnings(id, (inns: Innings[]) => {
+        setInnings(inns);
+        // Automatically switch to latest inning if live
+        const latest = inns[inns.length - 1];
+        if (latest && !latest.isCompleted) setTab(latest.inningsNo);
+    });
+    return () => { unsubMatch(); unsubInns(); };
   }, [id]);
 
   if (loading) return (
@@ -41,8 +44,7 @@ export default function MatchPage() {
     </div>
   );
 
-  const showInn1 = !!inn1;
-  const showInn2 = match.currentInnings === 2 || match.status === 'completed';
+  const showInns = innings.length > 0;
 
   const handleShare = () => {
     if (navigator.share) {
@@ -82,17 +84,23 @@ export default function MatchPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           {/* Team 1 Section */}
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, opacity: .8 }}>{match.team1Name}</div>
             {(() => {
-              const team1Inn = inn1?.battingTeamId === match.team1Id ? inn1 : (inn2?.battingTeamId === match.team1Id ? inn2 : null);
+              const team1Inn = innings.find(i => i.battingTeamId === match.team1Id && i.inningsNo <= 2);
+              const team1SO = innings.filter(i => i.battingTeamId === match.team1Id && i.inningsNo > 2);
               if (!team1Inn) return null;
               return (
                 <>
                   <div style={{ fontSize: 32, fontWeight: 800 }}>{team1Inn.totalRuns}/{team1Inn.wickets}</div>
                   <div style={{ fontSize: 12, opacity: .7 }}>({team1Inn.overs}.{team1Inn.balls} ov)</div>
+                  {team1SO.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#f6ad55', fontWeight: 700, marginTop: 4 }}>
+                      Super Over: {team1SO.map(so => `${so.totalRuns}/${so.wickets}`).join(', ')}
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -104,12 +112,18 @@ export default function MatchPage() {
           <div style={{ flex: 1, textAlign: 'right' }}>
             <div style={{ fontSize: 14, opacity: .8 }}>{match.team2Name}</div>
             {(() => {
-              const team2Inn = inn1?.battingTeamId === match.team2Id ? inn1 : (inn2?.battingTeamId === match.team2Id ? inn2 : null);
+              const team2Inn = innings.find(i => i.battingTeamId === match.team2Id && i.inningsNo <= 2);
+              const team2SO = innings.filter(i => i.battingTeamId === match.team2Id && i.inningsNo > 2);
               if (!team2Inn) return null;
               return (
                 <>
                   <div style={{ fontSize: 32, fontWeight: 800 }}>{team2Inn.totalRuns}/{team2Inn.wickets}</div>
                   <div style={{ fontSize: 12, opacity: .7 }}>({team2Inn.overs}.{team2Inn.balls} ov)</div>
+                  {team2SO.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#f6ad55', fontWeight: 700, marginTop: 4 }}>
+                      Super Over: {team2SO.map(so => `${so.totalRuns}/${so.wickets}`).join(', ')}
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -123,24 +137,36 @@ export default function MatchPage() {
         )}
         {match.result && (
           <div style={{
-            marginTop: 10, padding: '12px 14px', background: 'rgba(255,255,255,.15)',
-            borderRadius: 'var(--radius-md)', fontSize: 15, fontWeight: 700, borderLeft: '4px solid #f6ad55'
+            marginTop: 14, padding: '14px 18px', 
+            background: match.result.includes('Tied') ? 'linear-gradient(90deg, #f6ad55, #ed8936)' : 'rgba(255,255,255,.2)',
+            borderRadius: 12, border: '1px solid rgba(255,255,255,.3)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
           }}>
-            🏆 {match.result}
+            <div style={{ fontSize: 13, fontWeight: 700, color: match.result.includes('Tied') ? '#000' : '#fff' }}>
+              🏁 {match.result}
+            </div>
+            {match.result.includes('Super Over') && (
+               <div style={{ fontSize: 11, opacity: 0.8, marginTop: 4, color: match.result.includes('Tied') ? '#2d3748' : '#e2e8f0' }}>
+                 Match was decided by a Super Over after a tie in full-time.
+               </div>
+            )}
           </div>
         )}
 
         {/* Live Summary Stats */}
         {match.status === 'live' && (() => {
-           const currInn = match.currentInnings === 1 ? inn1 : inn2;
+           const currInn = innings.find(i => i.inningsNo === match.currentInnings);
            if (!currInn) return null;
-           const target = match.currentInnings === 2 && inn1 ? inn1.totalRuns + 1 : null;
+           const isSO = match.currentInnings > 2;
+           const prevInn = innings.find(i => i.inningsNo === match.currentInnings - 1);
+           const target = (match.currentInnings % 2 === 0 && prevInn) ? prevInn.totalRuns + 1 : null;
            const needed = target ? target - currInn.totalRuns : null;
            const ballsRem = target ? (match.overs * 6) - (currInn.overs * 6 + currInn.balls) : null;
            const rrr = (needed && ballsRem && ballsRem > 0) ? ((needed / ballsRem) * 6).toFixed(2) : '0.00';
 
            return (
              <div style={{ marginTop: 15, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+               {isSO && <div style={{ color: '#f6ad55', fontWeight: 800, textAlign: 'center', marginBottom: 10, fontSize: 14 }}>🔥 SUPER OVER IN PROGRESS</div>}
                <div style={{ display: 'flex', gap: 15, fontSize: 12, fontWeight: 600 }}>
                  <div style={{ flex: 1, background: 'rgba(255,255,255,0.1)', padding: '8px 10px', borderRadius: 8 }}>
                     CRR: {currInn.runRate?.toFixed(2) || '0.00'}
@@ -187,25 +213,28 @@ export default function MatchPage() {
       )}
 
       {/* Innings Tabs */}
-      {(showInn1 || showInn2) && (
-        <div className="tabs">
-          {inn1 && (
-            <button className={`tab${tab === 1 ? ' active' : ''}`} onClick={() => setTab(1)}>
-              1st Innings — {inn1.battingTeamName}
-            </button>
-          )}
-          {inn2 && (
-            <button className={`tab${tab === 2 ? ' active' : ''}`} onClick={() => setTab(2)}>
-              2nd Innings — {inn2.battingTeamName}
-            </button>
-          )}
+      {showInns && (
+        <div className="tabs" style={{ marginBottom: 15 }}>
+          {innings.map(inn => {
+            const isSO = inn.inningsNo > 2;
+            const soNo = Math.floor((inn.inningsNo - 1) / 2); // SO 1, 2, ...
+            return (
+              <button key={inn.inningsNo} className={`tab${tab === inn.inningsNo ? ' active' : ''}`} onClick={() => setTab(inn.inningsNo)}>
+                {isSO ? `S.O. ${soNo} (${inn.battingTeamName})` : `${inn.inningsNo === 1? '1st' : '2nd'} Innings`}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {tab === 1 && inn1 && <Scorecard innings={inn1} />}
-      {tab === 2 && inn2 && <Scorecard innings={inn2} isTarget />}
+       {innings.find(i => i.inningsNo === tab) && (
+          <Scorecard 
+            innings={innings.find(i => i.inningsNo === tab)!} 
+            isTarget={tab % 2 === 0} 
+          />
+       )}
 
-      {!showInn1 && match.status === 'scheduled' && (
+      {!showInns && match.status === 'scheduled' && (
         <div className="empty-state">
           <div className="empty-state-icon">⏰</div>
           <div className="empty-state-text">Match hasn&apos;t started yet</div>

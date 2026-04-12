@@ -105,21 +105,26 @@ export const subscribeToMatches = (cb: (m: Match[]) => void) =>
     cb(snap.docs.map(d => ({ id: d.id, ...d.data() } as Match)));
   });
 
-// ─── Innings ──────────────────────────────────────────────────────────────────
-export const setInnings = (matchId: string, inningsNo: 1 | 2, data: Innings) =>
+ // ─── Innings ──────────────────────────────────────────────────────────────────
+export const setInnings = (matchId: string, inningsNo: number, data: Innings) =>
   setDoc(doc(db, 'matches', matchId, 'innings', String(inningsNo)), data);
 
-export const updateInnings = (matchId: string, inningsNo: 1 | 2, data: Partial<Innings>) =>
+export const updateInnings = (matchId: string, inningsNo: number, data: Partial<Innings>) =>
   updateDoc(doc(db, 'matches', matchId, 'innings', String(inningsNo)), data);
 
-export const getInnings = async (matchId: string, inningsNo: 1 | 2): Promise<Innings | null> => {
+export const getInnings = async (matchId: string, inningsNo: number): Promise<Innings | null> => {
   const snap = await getDoc(doc(db, 'matches', matchId, 'innings', String(inningsNo)));
   return snap.exists() ? (snap.data() as Innings) : null;
 };
 
-export const subscribeToInnings = (matchId: string, inningsNo: 1 | 2, cb: (i: Innings) => void) =>
+export const subscribeToInnings = (matchId: string, inningsNo: number, cb: (i: Innings) => void) =>
   onSnapshot(doc(db, 'matches', matchId, 'innings', String(inningsNo)), snap => {
     if (snap.exists()) cb(snap.data() as Innings);
+  });
+
+export const subscribeToAllInnings = (matchId: string, cb: (i: Innings[]) => void) =>
+  onSnapshot(collection(db, 'matches', matchId, 'innings'), snap => {
+    cb(snap.docs.map(d => ({ ...d.data() } as Innings)).sort((a,b) => a.inningsNo - b.inningsNo));
   });
 
 // ─── Deliveries ───────────────────────────────────────────────────────────────
@@ -129,7 +134,7 @@ export const addDelivery = (matchId: string, data: Omit<Delivery, 'id' | 'timest
     timestamp: serverTimestamp(),
   });
 
-export const getDeliveries = async (matchId: string, innings: 1 | 2): Promise<Delivery[]> => {
+export const getDeliveries = async (matchId: string, innings: number): Promise<Delivery[]> => {
   const snap = await getDocs(
     query(
       collection(db, 'matches', matchId, 'deliveries'),

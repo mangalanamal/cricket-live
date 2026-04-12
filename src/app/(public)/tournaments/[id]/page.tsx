@@ -18,7 +18,8 @@ interface PlayerStats {
 export default function TournamentDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const [tournament, setTournament] = useState<Tournament | null>(null);
-  const [pointsTable, setPointsTable] = useState<Record<string, TeamStats[]>>({});
+  const [pointsTable, setPointsTable] = useState<Record<string, Record<string, TeamStats[]>>>({});
+  const [globalTeamStats, setGlobalTeamStats] = useState<TeamStats[]>([]);
   const [bestXI, setBestXI] = useState<PlayerStats[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,16 +42,22 @@ export default function TournamentDetailsPage() {
         });
       });
 
-      const statsMap: Record<string, TeamStats> = {};
+      const statsMap: Record<string, Record<string, TeamStats>> = {}; // stage -> teamId -> stats
       const pStats: Record<string, PlayerStats> = {};
 
       for (const m of completed) {
         if (!m.team1Id || !m.team2Id) continue;
         
-        if (!statsMap[m.team1Id]) statsMap[m.team1Id] = { id: m.team1Id, name: m.team1Name, groupId: m.groupId, p: 0, w: 0, l: 0, t: 0, pts: 0, rs: 0, of: 0, rc: 0, ob: 0, nrr: 0 };
-        if (!statsMap[m.team2Id]) statsMap[m.team2Id] = { id: m.team2Id, name: m.team2Name, groupId: m.groupId, p: 0, w: 0, l: 0, t: 0, pts: 0, rs: 0, of: 0, rc: 0, ob: 0, nrr: 0 };
+        const stage = m.stageId || 'Group Stage';
+        if (!statsMap[stage]) statsMap[stage] = {};
+        
+        if (!statsMap[stage][m.team1Id]) statsMap[stage][m.team1Id] = { id: m.team1Id, name: m.team1Name, groupId: m.groupId, p: 0, w: 0, l: 0, t: 0, pts: 0, rs: 0, of: 0, rc: 0, ob: 0, nrr: 0 };
+        if (!statsMap[stage][m.team2Id]) statsMap[stage][m.team2Id] = { id: m.team2Id, name: m.team2Name, groupId: m.groupId, p: 0, w: 0, l: 0, t: 0, pts: 0, rs: 0, of: 0, rc: 0, ob: 0, nrr: 0 };
 
-        statsMap[m.team1Id].p++; statsMap[m.team2Id].p++;
+        statsMap[stage][m.team1Id].p++; statsMap[stage][m.team2Id].p++;
+
+        const st1 = statsMap[stage][m.team1Id];
+        const st2 = statsMap[stage][m.team2Id];
 
         const inn1 = await getInnings(m.id, 1);
         const inn2 = await getInnings(m.id, 2);
@@ -66,13 +73,6 @@ export default function TournamentDetailsPage() {
 
           const parseOvers = (o: number, b: number) => o + b / 6;
 
-          const addNrrStats = (teamId: string, rs: number, ofaced: number, wlost: number, rc: number, obowled: number, wtaken: number) => {
-            const effectiveOF = wlost === 10 ? m.overs : ofaced;
-            const effectiveOB = wtaken === 10 ? m.overs : obowled;
-            statsMap[teamId].rs += rs; statsMap[teamId].of += effectiveOF;
-            statsMap[teamId].rc += rc; statsMap[teamId].ob += effectiveOB;
-          };
-
           if (inn1.battingTeamId === m.team1Id) {
             addNrrStats(m.team1Id, inn1.totalRuns, parseOvers(inn1.overs, inn1.balls), inn1.wickets, inn2.totalRuns, parseOvers(inn2.overs, inn2.balls), inn2.wickets);
             addNrrStats(m.team2Id, inn2.totalRuns, parseOvers(inn2.overs, inn2.balls), inn2.wickets, inn1.totalRuns, parseOvers(inn1.overs, inn1.balls), inn1.wickets);
@@ -81,8 +81,21 @@ export default function TournamentDetailsPage() {
             addNrrStats(m.team1Id, inn2.totalRuns, parseOvers(inn2.overs, inn2.balls), inn2.wickets, inn1.totalRuns, parseOvers(inn1.overs, inn1.balls), inn1.wickets);
           }
 
+          function addNrrStats(teamId: string, rs: number, ofaced: number, wlost: number, rc: number, obowled: number, wtaken: number) {
+            const currentST = statsMap[stage][teamId];
+            const effectiveOF = wlost === 10 ? m.overs : ofaced;
+            const effectiveOB = wtaken === 10 ? m.overs : obowled;
+            currentST.rs += rs; currentST.of += effectiveOF;
+            currentST.rc += rc; currentST.ob += effectiveOB;
+          }
+
           // Player Stats Extractor
-          [inn1, inn2].forEach(inn => {
+          const allMatchInns = await Promise.all(
+             Array.from({ length: m.currentInnings || 2 }, (_, i) => getInnings(m.id, i + 1))
+          );
+
+          allMatchInns.forEach(inn => {
+            if (!inn) return;
             inn.batsmen.forEach(b => {
               if (!pStats[b.playerId]) pStats[b.playerId] = { id: b.playerId, name: b.playerName, teamName: playerRoles[b.playerId]?.teamName || 'UNK', role: playerRoles[b.playerId]?.role || 'batsman', runs: 0, balls: 0, wickets: 0, runsConceded: 0, oversBowled: 0 };
               pStats[b.playerId].runs += (b.runs || 0);
@@ -103,21 +116,27 @@ export default function TournamentDetailsPage() {
           else isTie = true;
         }
 
-        if (t1Wins) { statsMap[m.team1Id].w++; statsMap[m.team1Id].pts += 2; statsMap[m.team2Id].l++; }
-        else if (t2Wins) { statsMap[m.team2Id].w++; statsMap[m.team2Id].pts += 2; statsMap[m.team1Id].l++; }
-        else if (isTie) { statsMap[m.team1Id].t++; statsMap[m.team2Id].t++; statsMap[m.team1Id].pts += 1; statsMap[m.team2Id].pts += 1; }
+        if (t1Wins) { st1.w++; st1.pts += 2; st2.l++; }
+        else if (t2Wins) { st2.w++; st2.pts += 2; st1.l++; }
+        else if (isTie) { st1.t++; st2.t++; st1.pts += 1; st2.pts += 1; }
       }
 
-      const groupsDict: Record<string, TeamStats[]> = {};
-      Object.values(statsMap).forEach(st => {
-        st.nrr = st.of > 0 ? (st.rs/st.of) - (st.ob>0 ? st.rc/st.ob : 0) : 0;
-        const gName = st.groupId || 'Main Group';
-        if (!groupsDict[gName]) groupsDict[gName] = [];
-        groupsDict[gName].push(st);
-      });
-
-      Object.keys(groupsDict).forEach(k => {
-        groupsDict[k].sort((a, b) => b.pts - a.pts || b.nrr - a.nrr);
+      const stageDict: Record<string, Record<string, TeamStats[]>> = {};
+      
+      Object.keys(statsMap).forEach(stage => {
+        const groupsDict: Record<string, TeamStats[]> = {};
+        Object.values(statsMap[stage]).forEach(st => {
+            st.nrr = st.of > 0 ? (st.rs/st.of) - (st.ob>0 ? st.rc/st.ob : 0) : 0;
+            const gName = st.groupId || 'Main Group';
+            if (!groupsDict[gName]) groupsDict[gName] = [];
+            groupsDict[gName].push(st);
+        });
+        
+        Object.keys(groupsDict).forEach(k => {
+            groupsDict[k].sort((a, b) => b.pts - a.pts || b.nrr - a.nrr);
+        });
+        
+        stageDict[stage] = groupsDict;
       });
 
       // Best XI Selection Engine
@@ -139,7 +158,23 @@ export default function TournamentDetailsPage() {
       teamXI.sort((a, b) => (roleOrder[a.role] || 9) - (roleOrder[b.role] || 9));
 
       setBestXI(teamXI);
-      setPointsTable(groupsDict);
+      setPointsTable(stageDict);
+
+      // Aggregate Global Team Stats
+      const globalRecord: Record<string, TeamStats> = {};
+      Object.keys(statsMap).forEach(stage => {
+        Object.values(statsMap[stage]).forEach(st => {
+           if (!globalRecord[st.id]) {
+             globalRecord[st.id] = { ...st, p:0, w:0, l:0, t:0, pts:0, rs:0, of:0, rc:0, ob:0, nrr:0 };
+           }
+           const g = globalRecord[st.id];
+           g.p += st.p; g.w += st.w; g.l += st.l; g.t += st.t; g.pts += st.pts;
+           g.rs += st.rs; g.of += st.of; g.rc += st.rc; g.ob += st.ob;
+        });
+      });
+      const globalSorted = Object.values(globalRecord).sort((a,b) => b.pts - a.pts || (b.rs/b.of - b.rc/b.ob) - (a.rs/a.of - a.rc/a.ob));
+      setGlobalTeamStats(globalSorted);
+
       setLoading(false);
     };
 
@@ -166,41 +201,48 @@ export default function TournamentDetailsPage() {
       </div>
 
       <div className="grid-2">
-        {/* Points Table */}
         <div className="card card-padded" style={{ alignSelf: 'flex-start' }}>
-          <h2 style={{ marginBottom: 16 }}>📊 Points Table & NRR</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={{ margin: 0 }}>📊 Points Table & NRR</h2>
+            <button className="btn btn-ghost btn-sm no-print" onClick={() => window.print()}>🖨️ Print / Save PDF</button>
+          </div>
           {Object.keys(pointsTable).length === 0 ? (
             <p style={{ color: 'var(--text-muted)' }}>No match data available to generate table.</p>
           ) : (
-            Object.entries(pointsTable).map(([group, teams]) => (
-              <div key={group} style={{ marginBottom: 24 }}>
-                {group !== 'Main Group' && <h3 style={{ marginBottom: 12, color: 'var(--green-main)', fontSize: 16 }}>{group}</h3>}
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="stats-table">
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: 'left' }}>Team</th>
-                        <th>P</th><th>W</th><th>L</th><th>T</th>
-                        <th>PTS</th><th>NRR</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {teams.map((t, idx) => (
-                        <tr key={t.id}>
-                          <td style={{ textAlign: 'left', fontWeight: 600 }}>{idx + 1}. {t.name}</td>
-                          <td>{t.p}</td>
-                          <td>{t.w}</td>
-                          <td>{t.l}</td>
-                          <td>{t.t}</td>
-                          <td style={{ fontWeight: 800, color: 'var(--green-main)' }}>{t.pts}</td>
-                          <td style={{ fontWeight: 600, color: t.nrr >= 0 ? '#10b981' : '#ef4444' }}>
-                            {t.nrr > 0 ? '+' : ''}{t.nrr.toFixed(3)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            Object.entries(pointsTable).map(([stage, groups]) => (
+              <div key={stage} style={{ marginBottom: 32 }}>
+                <h3 style={{ borderBottom: '2px solid var(--green-main)', paddingBottom: 8, marginBottom: 16, color: 'var(--green-dark)' }}>{stage}</h3>
+                {Object.entries(groups).map(([group, teams]) => (
+                  <div key={group} style={{ marginBottom: 20 }}>
+                    {group !== 'Main Group' && <h4 style={{ marginBottom: 10, color: 'var(--green-main)', fontSize: 14 }}>{group}</h4>}
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="stats-table">
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left' }}>Team</th>
+                            <th>P</th><th>W</th><th>L</th><th>T</th>
+                            <th>PTS</th><th>NRR</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {teams.map((t, idx) => (
+                            <tr key={t.id}>
+                              <td style={{ textAlign: 'left', fontWeight: 600 }}>{idx + 1}. {t.name}</td>
+                              <td>{t.p}</td>
+                              <td>{t.w}</td>
+                              <td>{t.l}</td>
+                              <td>{t.t}</td>
+                              <td style={{ fontWeight: 800, color: 'var(--green-main)' }}>{t.pts}</td>
+                              <td style={{ fontWeight: 600, color: t.nrr >= 0 ? '#10b981' : '#ef4444' }}>
+                                {t.nrr > 0 ? '+' : ''}{t.nrr.toFixed(3)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
               </div>
             ))
           )}
@@ -235,6 +277,45 @@ export default function TournamentDetailsPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Global Team Report */}
+      <div className="card card-padded mt-24">
+         <h2 style={{ marginBottom: 16 }}>🏆 Tournament Participant Statistics (All Stages)</h2>
+         <div style={{ overflowX: 'auto' }}>
+            <table className="stats-table">
+               <thead>
+                  <tr>
+                     <th style={{ textAlign: 'left' }}>Team Name</th>
+                     <th>Played</th>
+                     <th>Wins</th>
+                     <th>Losses</th>
+                     <th>Tied</th>
+                     <th>Total Runs</th>
+                     <th>Overs Faced</th>
+                     <th>Runs Conceded</th>
+                     <th>Overs Bowled</th>
+                     <th>Total Pts</th>
+                  </tr>
+               </thead>
+               <tbody>
+                  {globalTeamStats.map(t => (
+                     <tr key={t.id}>
+                        <td style={{ textAlign: 'left', fontWeight: 700 }}>{t.name}</td>
+                        <td style={{ textAlign: 'center' }}>{t.p}</td>
+                        <td style={{ textAlign: 'center', color: '#10b981' }}>{t.w}</td>
+                        <td style={{ textAlign: 'center', color: '#ef4444' }}>{t.l}</td>
+                        <td style={{ textAlign: 'center' }}>{t.t}</td>
+                        <td style={{ textAlign: 'center' }}>{t.rs}</td>
+                        <td style={{ textAlign: 'center' }}>{t.of.toFixed(1)}</td>
+                        <td style={{ textAlign: 'center' }}>{t.rc}</td>
+                        <td style={{ textAlign: 'center' }}>{t.ob.toFixed(1)}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 800 }}>{t.pts}</td>
+                     </tr>
+                  ))}
+               </tbody>
+            </table>
+         </div>
       </div>
     </div>
   );

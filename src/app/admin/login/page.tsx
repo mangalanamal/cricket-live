@@ -5,10 +5,10 @@ import { loginUser, registerAdmin, getUserProfile } from '@/lib/auth';
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [email, setEmail]       = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError]       = useState('');
-  const [loading, setLoading]   = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [isRegister, setIsRegister] = useState(false);
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -70,15 +70,15 @@ export default function AdminLoginPage() {
           </button>
         </form>
 
-        <div style={{ textAlign: 'center', marginTop: 16 }}>
-          <button 
-            type="button" 
-            onClick={() => setIsRegister(!isRegister)} 
+        {/*         <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={() => setIsRegister(!isRegister)}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', textDecoration: 'underline' }}
           >
             {isRegister ? 'Already have an account? Sign In' : 'First time setup? Create Admin Account'}
           </button>
-        </div>
+        </div> */}
 
         <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--text-muted)' }}>
           <a href="/scorer/login">Scorer login →</a>
