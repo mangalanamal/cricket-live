@@ -29,7 +29,7 @@ export default function Scorecard({ innings, label, isTarget }: Props) {
               {innings.totalRuns}/{innings.wickets}
             </div>
             <div className="score-overs">
-              ({innings.overs}.{innings.balls} ov) &nbsp;|&nbsp; {innings.inningsNo === 1 ? '1st' : '2nd'} Innings
+              ({innings.overs}.{innings.balls} ov) &nbsp;|&nbsp; {innings.inningsNo <= 2 ? (innings.inningsNo === 1 ? '1st' : '2nd') : 'Super Over'}
             </div>
           </div>
           {isTarget && innings.targetRuns && (

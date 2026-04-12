@@ -66,7 +66,7 @@ export interface Match {
   tossDecision?: 'bat' | 'field';
   scorerId?: string;
   result?: string;
-  currentInnings: 1 | 2;
+  currentInnings: number;
   score1?: string; // e.g. "150/5 (20.0)"
   score2?: string;
   createdAt: Date;
@@ -80,6 +80,7 @@ export interface BatsmanScore {
   fours: number;
   sixes: number;
   isOut: boolean;
+  isRetiredHurt?: boolean;
   dismissal?: string;
   strikeRate: number;
 }
@@ -98,7 +99,7 @@ export interface BowlerScore {
 }
 
 export interface Innings {
-  inningsNo: 1 | 2;
+  inningsNo: number;
   battingTeamId: string;
   battingTeamName: string;
   bowlingTeamId: string;
@@ -127,7 +128,7 @@ export interface Innings {
 
 export interface Delivery {
   id: string;
-  innings: 1 | 2;
+  innings: number;
   over: number;
   ball: number;
   batsmanId: string;
