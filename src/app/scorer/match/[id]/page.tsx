@@ -28,6 +28,8 @@ export default function ProfessionalScoringPanel() {
   const [strikerId, setStrikerId] = useState('');
   const [nonStrikerId, setNonStrikerId] = useState('');
   const [bowlerId, setBowlerId] = useState('');
+  const [extraModifier, setExtraModifier] = useState<'wd' | 'nb' | 'bye' | 'lb' | null>(null);
+  const [isQuickMode, setIsQuickMode] = useState(false);
 
   // Modal states
   const [showWicketModal, setShowWicketModal] = useState(false);
@@ -111,16 +113,19 @@ export default function ProfessionalScoringPanel() {
   };
 
   const initInning = async () => {
-    if (!match || !batTeamId || !strikerId || !nonStrikerId || !bowlerId) return showAlert('Missing Selection', 'Select both batsmen and an opening bowler to begin.', 'warning');
+    if (!match || !batTeamId) return showAlert('Missing Selection', 'Please select batting team.', 'warning');
 
     const batTeam = batTeamId === match.team1Id ? t1 : t2;
     const bowlTeam = batTeamId === match.team1Id ? t2 : t1;
     if (!batTeam || !bowlTeam) return;
 
+    if (!isQuickMode && (!strikerId || !nonStrikerId || !bowlerId)) {
+      return showAlert('Missing Selection', 'Select both batsmen and an opening bowler to begin professional scoring.', 'warning');
+    }
+
     const strk = batTeam.players.find(p => p.id === strikerId);
     const nstrk = batTeam.players.find(p => p.id === nonStrikerId);
     const bowl = bowlTeam.players.find(p => p.id === bowlerId);
-    if (!strk || !nstrk || !bowl) return;
 
     const prevInn = match.currentInnings % 2 === 0 ? await getInnings(id, match.currentInnings - 1) : null;
 
@@ -131,17 +136,18 @@ export default function ProfessionalScoringPanel() {
       totalRuns: 0, wickets: 0, overs: 0, balls: 0,
       extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0, total: 0 },
       runRate: 0,
+      isQuickMode,
       ...(prevInn ? { targetRuns: prevInn.totalRuns + 1 } : {}),
-      batsmen: [
+      batsmen: (strk && nstrk) ? [
         { playerId: strk.id, playerName: strk.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0 },
         { playerId: nstrk.id, playerName: nstrk.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0 }
-      ],
-      bowlers: [
+      ] : [],
+      bowlers: bowl ? [
         { playerId: bowl.id, playerName: bowl.name, overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0, economy: 0, wides: 0, noBalls: 0 }
-      ],
+      ] : [],
       fallOfWickets: [],
-      currentBatsmen: [strk.id, nstrk.id],
-      currentBowler: bowl.id,
+      currentBatsmen: (strk && nstrk) ? [strk.id, nstrk.id] : ['', ''],
+      currentBowler: bowl?.id || '',
       isCompleted: false
     };
 
@@ -353,45 +359,72 @@ export default function ProfessionalScoringPanel() {
     let updatedInning = { ...inning };
     let extras = { ...updatedInning.extras };
     let swap = false;
-    let isLegal = (extraType !== 'wd' && extraType !== 'nb' && !isAdjustment);
-
+    
     // If it's pure run adjustment, we just add to totals/batsman without affecting ball counts
     if (isAdjustment) {
-      updatedInning.totalRuns += runs;
+      updatedInning.totalRuns = Math.max(0, updatedInning.totalRuns + runs);
       const batsmen = [...updatedInning.batsmen];
       const sIdx = batsmen.findIndex(b => b.playerId === updatedInning.currentBatsmen[0]);
-      if (sIdx !== -1) batsmen[sIdx].runs += runs;
+      if (sIdx !== -1) {
+        batsmen[sIdx].runs = Math.max(0, batsmen[sIdx].runs + runs);
+      }
 
       const bowlers = [...updatedInning.bowlers];
       const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
-      if (bwIdx !== -1) bowlers[bwIdx].runs += runs;
+      if (bwIdx !== -1) {
+        bowlers[bwIdx].runs = Math.max(0, bowlers[bwIdx].runs + runs);
+      }
 
       updatedInning.batsmen = batsmen;
       updatedInning.bowlers = bowlers;
+      
+      const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
       await updateInnings(id, match.currentInnings, updatedInning);
+      if (match.currentInnings <= 2) {
+        await updateMatch(id, { [match.currentInnings === 1 ? 'score1' : 'score2']: scoreStr });
+      }
       setInning(updatedInning);
       return;
     }
 
-    // 1. Calculate Runs and Extras
+    // 1. Calculate Runs and Extras distribution
     let penalty = 0;
+    let batsmanRuns = 0;
+    let bowlerRuns = 0;
+    let addedExtras = 0;
+    let isLegal = (extraType !== 'wd' && extraType !== 'nb');
+    let incrementBatsmanBalls = (extraType !== 'wd');
+
     if (extraType === 'wd') {
       penalty = widePenalty;
-      extras.wides += (runs + penalty);
-      extras.total += (runs + penalty);
+      addedExtras = runs + penalty;
+      extras.wides += addedExtras;
+      bowlerRuns = addedExtras;
+      batsmanRuns = 0;
     } else if (extraType === 'nb') {
       penalty = noBallPenalty;
-      extras.noBalls += (runs + penalty);
-      extras.total += (runs + penalty);
+      addedExtras = penalty; // Penalty goes to extras
+      extras.noBalls += penalty;
+      batsmanRuns = runs; // Batsman gets the runs hit
+      bowlerRuns = runs + penalty; // Bowler is charged with both
     } else if (extraType === 'lb') {
-      extras.legByes += runs;
-      extras.total += runs;
+      addedExtras = runs;
+      extras.legByes += addedExtras;
+      bowlerRuns = 0; // Leg Byes don't count against bowler
+      batsmanRuns = 0;
     } else if (extraType === 'bye') {
-      extras.byes += runs;
-      extras.total += runs;
+      addedExtras = runs;
+      extras.byes += addedExtras;
+      bowlerRuns = 0; // Byes don't count against bowler
+      batsmanRuns = 0;
+    } else {
+      batsmanRuns = runs;
+      bowlerRuns = runs;
+      addedExtras = 0;
     }
 
-    updatedInning.totalRuns += (runs + penalty);
+    updatedInning.totalRuns += (batsmanRuns + addedExtras);
+    extras.total += addedExtras;
     updatedInning.extras = extras;
 
     // 2. Overs/Balls logic
@@ -404,25 +437,25 @@ export default function ProfessionalScoringPanel() {
       }
     }
 
+    // Striker Swap logic - physical runs taken
+    // Note: if a boundary is scored (4 or 6), runs % 2 is 0, so no swap.
+    if (runs % 2 !== 0) swap = !swap;
+
     // 3. Batsman Update
     const batsmen = [...updatedInning.batsmen];
     const sIdx = batsmen.findIndex(b => b.playerId === updatedInning.currentBatsmen[0]);
-    if (sIdx !== -1 && extraType !== 'wd') {
-      const batsmanRuns = (extraType === 'lb' || extraType === 'bye') ? 0 : runs;
+    if (sIdx !== -1) {
       batsmen[sIdx].runs += batsmanRuns;
-      batsmen[sIdx].balls++;
+      if (incrementBatsmanBalls) batsmen[sIdx].balls++;
       if (batsmanRuns === 4) batsmen[sIdx].fours++;
       if (batsmanRuns === 6) batsmen[sIdx].sixes++;
-      if (batsmanRuns % 2 !== 0) swap = !swap;
     }
 
     // 4. Bowler Update
     const bowlers = [...updatedInning.bowlers];
     const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
     if (bwIdx !== -1) {
-      if (extraType !== 'lb' && extraType !== 'bye') {
-        bowlers[bwIdx].runs += (runs + penalty);
-      }
+      bowlers[bwIdx].runs += bowlerRuns;
       if (isLegal) {
         bowlers[bwIdx].balls++;
         if (bowlers[bwIdx].balls === 6) {
@@ -434,12 +467,14 @@ export default function ProfessionalScoringPanel() {
       if (extraType === 'nb') bowlers[bwIdx].noBalls++;
     }
 
-    if (swap) {
+    if (swap && !updatedInning.isQuickMode) {
       updatedInning.currentBatsmen = [updatedInning.currentBatsmen[1], updatedInning.currentBatsmen[0]];
     }
 
-    updatedInning.batsmen = batsmen;
-    updatedInning.bowlers = bowlers;
+    if (!updatedInning.isQuickMode) {
+      updatedInning.batsmen = batsmen;
+      updatedInning.bowlers = bowlers;
+    }
     updatedInning.runRate = (updatedInning.totalRuns / (updatedInning.overs + updatedInning.balls / 6)) || 0;
 
     const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
@@ -448,26 +483,23 @@ export default function ProfessionalScoringPanel() {
     const isSO = match.currentInnings > 2;
     if (!isSO) {
       await updateMatch(id, { [match.currentInnings === 1 ? 'score1' : 'score2']: scoreStr });
-    } else {
-      // For SO, we could update a separate field or just keep match scores as main match scores
     }
 
     setInning(updatedInning);
+    setExtraModifier(null); // Reset modifier after scoring
 
     // Over end check
-    if (swap && updatedInning.balls === 0 && !updatedInning.isCompleted) {
+    if (swap && updatedInning.balls === 0 && !updatedInning.isCompleted && !updatedInning.isQuickMode) {
       setShowBowlerModal(true);
     }
 
     // Inning completion check
     const isFirstInn = match.currentInnings === 1; const wicketLimit = isSO ? 2 : 10;
-
     let autoComplete = false;
 
     if (isFirstInn || match.currentInnings % 2 !== 0) {
       if (updatedInning.overs === match.overs || updatedInning.wickets === wicketLimit) autoComplete = true;
     } else {
-      // 2nd half of match or SO
       const prevInnNo = match.currentInnings - 1;
       const innPrev = await getInnings(id, prevInnNo);
       if (innPrev && updatedInning.totalRuns > innPrev.totalRuns) {
@@ -479,57 +511,60 @@ export default function ProfessionalScoringPanel() {
 
     if (autoComplete) {
       const ok = await showConfirm("Innings Completed", "The current innings has reached its target/limit. End innings now?");
-      if (ok) {
-        await endInning(updatedInning);
-      }
+      if (ok) await endInning(updatedInning);
     }
   };
 
   const handleWicket = async () => {
-    if (!inning || !outBatsmanId || !newBatsmanId) return showAlert('Incomplete Details', 'Please select the out batsman and the next player to come in.', 'warning');
+    if (!inning) return;
+    if (!inning.isQuickMode && (!outBatsmanId || !newBatsmanId)) return showAlert('Incomplete Details', 'Please select the out batsman and the next player to come in.', 'warning');
 
     let updatedInning = { ...inning };
     updatedInning.wickets++;
 
-    // Update batsman out
-    const batsmen = [...updatedInning.batsmen];
-    const oIdx = batsmen.findIndex(b => b.playerId === outBatsmanId);
-    if (oIdx !== -1) {
-      batsmen[oIdx].isOut = true;
-      batsmen[oIdx].dismissal = dismissalType;
-    }
+    if (!inning.isQuickMode) {
+      // Update batsman out
+      const batsmen = [...updatedInning.batsmen];
+      const oIdx = batsmen.findIndex(b => b.playerId === outBatsmanId);
+      if (oIdx !== -1) {
+        batsmen[oIdx].isOut = true;
+        batsmen[oIdx].dismissal = dismissalType;
+      }
 
-    // Add new batsman
-    const batTeam = updatedInning.battingTeamId === match?.team1Id ? t1 : t2;
-    const newB = batTeam?.players.find(p => p.id === newBatsmanId);
-    if (newB) {
-      batsmen.push({
-        playerId: newB.id, playerName: newB.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0
-      });
-      // Replace in current pair
-      const pair = [...updatedInning.currentBatsmen];
-      const pIdx = pair.indexOf(outBatsmanId);
-      if (pIdx !== -1) pair[pIdx] = newB.id;
-      updatedInning.currentBatsmen = pair as [string, string];
+      // Add new batsman
+      const batTeam = updatedInning.battingTeamId === match?.team1Id ? t1 : t2;
+      const newB = batTeam?.players.find(p => p.id === newBatsmanId);
+      if (newB) {
+        batsmen.push({
+          playerId: newB.id, playerName: newB.name, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, strikeRate: 0
+        });
+        // Replace in current pair
+        const pair = [...updatedInning.currentBatsmen];
+        const pIdx = pair.indexOf(outBatsmanId);
+        if (pIdx !== -1) pair[pIdx] = newB.id;
+        updatedInning.currentBatsmen = pair as [string, string];
+      }
+      updatedInning.batsmen = batsmen;
     }
 
     // Update bowler wickets
-    const bowlers = [...updatedInning.bowlers];
-    const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
-    if (bwIdx !== -1 && !['runout', 'retired'].includes(dismissalType)) {
-      bowlers[bwIdx].wickets++;
+    if (!inning.isQuickMode) {
+      const bowlers = [...updatedInning.bowlers];
+      const bwIdx = bowlers.findIndex(b => b.playerId === updatedInning.currentBowler);
+      if (bwIdx !== -1 && !['runout', 'retired'].includes(dismissalType)) {
+        bowlers[bwIdx].wickets++;
+      }
+      
+      if (bwIdx !== -1) {
+        bowlers[bwIdx].balls++;
+        if (bowlers[bwIdx].balls === 6) { bowlers[bwIdx].overs++; bowlers[bwIdx].balls = 0; }
+      }
+      updatedInning.bowlers = bowlers;
     }
 
     // Over count for wicket
     updatedInning.balls++;
     if (updatedInning.balls === 6) { updatedInning.overs++; updatedInning.balls = 0; }
-    if (bwIdx !== -1) {
-      bowlers[bwIdx].balls++;
-      if (bowlers[bwIdx].balls === 6) { bowlers[bwIdx].overs++; bowlers[bwIdx].balls = 0; }
-    }
-
-    updatedInning.batsmen = batsmen;
-    updatedInning.bowlers = bowlers;
 
     const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
     await updateInnings(id, match!.currentInnings, updatedInning);
@@ -595,35 +630,50 @@ export default function ProfessionalScoringPanel() {
         <p className="mb-16" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           {match.tossWinner === match.team1Id ? match.team1Name : match.team2Name} won the toss and elected to {match.tossDecision}.
         </p>
-        <div className="form-row">
-          <div className="form-group">
-            <label className="form-label">Striker</label>
-            <select className="form-select" value={strikerId} onChange={e => setStrikerId(e.target.value)}>
-              <option value="">- Select -</option>
-              {batTeam?.players
-                .filter(p => p.id !== nonStrikerId)
-                .map(p => <option key={p.id} value={p.id}>{p.name}</option>)
-              }
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Non-Striker</label>
-            <select className="form-select" value={nonStrikerId} onChange={e => setNonStrikerId(e.target.value)}>
-              <option value="">- Select -</option>
-              {batTeam?.players
-                .filter(p => p.id !== strikerId)
-                .map(p => <option key={p.id} value={p.id}>{p.name}</option>)
-              }
-            </select>
-          </div>
+        <div className="form-group mb-16" style={{ background: 'var(--surface2)', padding: '10px 15px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input 
+            type="checkbox" 
+            id="quickMode" 
+            checked={isQuickMode} 
+            onChange={e => setIsQuickMode(e.target.checked)}
+            style={{ width: 18, height: 18, cursor: 'pointer' }}
+          />
+          <label htmlFor="quickMode" style={{ cursor: 'pointer', fontWeight: 600 }}>⚡ Quick Scoring Mode (No player tracking)</label>
         </div>
-        <div className="form-group">
-          <label className="form-label">Opening Bowler</label>
-          <select className="form-select" value={bowlerId} onChange={e => setBowlerId(e.target.value)}>
-            <option value="">- Select -</option>
-            {bowlTeam?.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
+
+        {!isQuickMode && (
+          <>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Striker</label>
+                <select className="form-select" value={strikerId} onChange={e => setStrikerId(e.target.value)}>
+                  <option value="">- Select -</option>
+                  {batTeam?.players
+                    .filter(p => p.id !== nonStrikerId)
+                    .map(p => <option key={p.id} value={p.id}>{p.name}</option>)
+                  }
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Non-Striker</label>
+                <select className="form-select" value={nonStrikerId} onChange={e => setNonStrikerId(e.target.value)}>
+                  <option value="">- Select -</option>
+                  {batTeam?.players
+                    .filter(p => p.id !== strikerId)
+                    .map(p => <option key={p.id} value={p.id}>{p.name}</option>)
+                  }
+                </select>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Opening Bowler</label>
+              <select className="form-select" value={bowlerId} onChange={e => setBowlerId(e.target.value)}>
+                <option value="">- Select -</option>
+                {bowlTeam?.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          </>
+        )}
         <button className="btn btn-primary w-full mt-16" onClick={initInning}>Start Match</button>
       </div>
     );
@@ -695,52 +745,82 @@ export default function ProfessionalScoringPanel() {
         })()}
       </div>
 
-      <div className="grid-2">
-        {/* Batsmen Tracking */}
-        <div className="card card-padded">
-          <h4 className="mb-12" style={{ textTransform: 'uppercase', fontSize: 12, opacity: 0.6 }}>Current Batsmen</h4>
-          <div className="batsman-row active">
-            <span>🏏 {striker?.playerName}*</span>
-            <strong>{striker?.runs} ({striker?.balls})</strong>
+      {!inning.isQuickMode && (
+        <div className="grid-2">
+          {/* Batsmen Tracking */}
+          <div className="card card-padded">
+            <h4 className="mb-12" style={{ textTransform: 'uppercase', fontSize: 12, opacity: 0.6 }}>Current Batsmen</h4>
+            <div className="batsman-row active">
+              <span>🏏 {striker?.playerName}*</span>
+              <strong>{striker?.runs} ({striker?.balls})</strong>
+            </div>
+            <div className="batsman-row">
+              <span>{nonStriker?.playerName}</span>
+              <strong>{nonStriker?.runs} ({nonStriker?.balls})</strong>
+            </div>
           </div>
-          <div className="batsman-row">
-            <span>{nonStriker?.playerName}</span>
-            <strong>{nonStriker?.runs} ({nonStriker?.balls})</strong>
-          </div>
-        </div>
 
-        {/* Bowler Details */}
-        <div className="card card-padded">
-          <h4 className="mb-12" style={{ textTransform: 'uppercase', fontSize: 12, opacity: 0.6 }}>Current Bowler</h4>
-          <div className="batsman-row">
-            <span>🥎 {currentBowler?.playerName}</span>
-            <strong>{currentBowler?.wickets}-{currentBowler?.runs} ({currentBowler?.overs}.{currentBowler?.balls})</strong>
+          {/* Bowler Details */}
+          <div className="card card-padded">
+            <h4 className="mb-12" style={{ textTransform: 'uppercase', fontSize: 12, opacity: 0.6 }}>Current Bowler</h4>
+            <div className="batsman-row">
+              <span>🥎 {currentBowler?.playerName}</span>
+              <strong>{currentBowler?.wickets}-{currentBowler?.runs} ({currentBowler?.overs}.{currentBowler?.balls})</strong>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="scoring-actions mt-20">
         <div className="scoring-grid">
           {[0, 1, 2, 3, 4, 6].map(r => (
-            <button key={r} className={`score-btn btn-${r}`} onClick={() => handleScore(r)}>{r}</button>
+            <button 
+              key={r} 
+              className={`score-btn btn-${r} ${extraModifier ? 'has-modifier' : ''}`} 
+              onClick={() => handleScore(r, extraModifier)}
+            >
+              {extraModifier ? `${extraModifier.toUpperCase()} + ${r}` : r}
+            </button>
           ))}
-          <button className="score-btn btn-wd" onClick={() => handleScore(0, 'wd')}>WD</button>
-          <button className="score-btn btn-nb" onClick={() => handleScore(0, 'nb')}>NB</button>
-          <button className="score-btn btn-bye" onClick={() => handleScore(1, 'bye')}>Bye</button>
-          <button className="score-btn btn-bye" onClick={() => handleScore(1, 'lb')}>LB</button>
+          <button 
+            className={`score-btn btn-wd ${extraModifier === 'wd' ? 'active' : ''}`} 
+            onClick={() => setExtraModifier(prev => prev === 'wd' ? null : 'wd')}
+          >
+            WD
+          </button>
+          <button 
+            className={`score-btn btn-nb ${extraModifier === 'nb' ? 'active' : ''}`} 
+            onClick={() => setExtraModifier(prev => prev === 'nb' ? null : 'nb')}
+          >
+            NB
+          </button>
+          <button 
+            className={`score-btn btn-bye ${extraModifier === 'bye' ? 'active' : ''}`} 
+            onClick={() => setExtraModifier(prev => prev === 'bye' ? null : 'bye')}
+          >
+            Bye
+          </button>
+          <button 
+            className={`score-btn btn-bye ${extraModifier === 'lb' ? 'active' : ''}`} 
+            onClick={() => setExtraModifier(prev => prev === 'lb' ? null : 'lb')}
+          >
+            LB
+          </button>
           <button className="score-btn btn-w" onClick={() => setShowWicketModal(true)}>OUT</button>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
-          <button className="btn btn-ghost w-full" onClick={() => {
-            const pair = [...inning.currentBatsmen];
-            setInning({ ...inning, currentBatsmen: [pair[1], pair[0]] });
-          }}>🔄 Switch Striker</button>
-          <button className="btn btn-ghost w-full" onClick={() => setShowBowlerModal(true)}>🥎 Change Bowler</button>
-          <button className="btn btn-ghost w-full" onClick={() => {
-            setReplaceTargetId(''); setIncomingPlayerId(''); setShowManageModal(true);
-          }}>🚑 Player Management</button>
-        </div>
+        {!inning.isQuickMode && (
+          <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
+            <button className="btn btn-ghost w-full" onClick={() => {
+              const pair = [...inning.currentBatsmen];
+              setInning({ ...inning, currentBatsmen: [pair[1], pair[0]] });
+            }}>🔄 Switch Striker</button>
+            <button className="btn btn-ghost w-full" onClick={() => setShowBowlerModal(true)}>🥎 Change Bowler</button>
+            <button className="btn btn-ghost w-full" onClick={() => {
+              setReplaceTargetId(''); setIncomingPlayerId(''); setShowManageModal(true);
+            }}>🚑 Player Management</button>
+          </div>
+        )}
 
         {/* Manual Adjustments */}
         <div className="mt-24" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 15, background: 'var(--surface2)', padding: '16px 20px', borderRadius: 12 }}>
@@ -750,8 +830,15 @@ export default function ProfessionalScoringPanel() {
               <button className="btn btn-ghost btn-sm" onClick={() => handleScore(-1, null, false, true)}>Run -1</button>
               <button className="btn btn-ghost btn-sm" onClick={() => handleScore(1, null, false, true)}>Run +1</button>
               <button className="btn btn-ghost btn-sm" style={{ color: '#e53e3e' }} onClick={async () => {
-                if (inning.wickets > 0) await updateInnings(id, match!.currentInnings, { ...inning, wickets: inning.wickets - 1 });
-                loadData();
+                if (inning.wickets > 0) {
+                  const updatedInning = { ...inning, wickets: inning.wickets - 1 };
+                  const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
+                  await updateInnings(id, match!.currentInnings, updatedInning);
+                  if (match!.currentInnings <= 2) {
+                    await updateMatch(id, { [match!.currentInnings === 1 ? 'score1' : 'score2']: scoreStr });
+                  }
+                  loadData();
+                }
               }}>Wicket -1</button>
             </div>
           </div>
@@ -763,9 +850,20 @@ export default function ProfessionalScoringPanel() {
                 const bowlers = [...inning.bowlers];
                 const bIdx = bowlers.findIndex(b => b.playerId === inning.currentBowler);
                 if (bIdx !== -1) {
+                  let newInningBalls = inning.balls;
+                  let newInningOvers = inning.overs;
+                  if (newInningBalls > 0) newInningBalls--;
+                  else if (newInningOvers > 0) { newInningOvers--; newInningBalls = 5; }
+
                   if (bowlers[bIdx].balls > 0) bowlers[bIdx].balls--;
                   else if (bowlers[bIdx].overs > 0) { bowlers[bIdx].overs--; bowlers[bIdx].balls = 5; }
-                  await updateInnings(id, match!.currentInnings, { ...inning, bowlers });
+                  
+                  const updatedInning = { ...inning, bowlers, balls: newInningBalls, overs: newInningOvers };
+                  const scoreStr = `${updatedInning.totalRuns}/${updatedInning.wickets} (${updatedInning.overs}.${updatedInning.balls})`;
+                  await updateInnings(id, match!.currentInnings, updatedInning);
+                  if (match!.currentInnings <= 2) {
+                    await updateMatch(id, { [match!.currentInnings === 1 ? 'score1' : 'score2']: scoreStr });
+                  }
                   loadData();
                 }
               }}>Ball -1</button>

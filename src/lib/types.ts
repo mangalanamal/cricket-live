@@ -124,6 +124,7 @@ export interface Innings {
   currentBatsmen: [string, string]; // [striker, non-striker] playerIds
   currentBowler: string;
   isCompleted: boolean;
+  isQuickMode?: boolean;
 }
 
 export interface Delivery {
